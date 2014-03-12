@@ -3,7 +3,7 @@
             {
                   'target_name': 'sodium',
                   'sources': [
-                        'sodium.cc',
+                        'sodium.cc', 'keyring.cc'
                   ],
                   'include_dirs': [
                         './libsodium/src/libsodium/include',

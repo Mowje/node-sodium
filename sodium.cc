@@ -16,6 +16,8 @@
 
 #include "sodium.h"
 
+#include "keyring.h"
+
 using namespace node;
 using namespace v8;
 
@@ -1110,6 +1112,9 @@ Handle<Value> bind_crypto_scalarmult(const Arguments& args) {
 void RegisterModule(Handle<Object> target) {
     // init sodium library before we do anything
     sodium_init();
+
+    // Register KeyRing object
+    KeyRing::Init(target);
 
     // Register version functions
     NEW_METHOD(sodium_version_string);
