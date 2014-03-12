@@ -15,17 +15,14 @@ private:
 	explicit KeyRing(std::string filename = "");
 	~KeyRing();
 	//Internal attributes
-	std::string privateKey; //Edwards private key
-	std::string publicKey; //Edwards public key
-	std::string mPrivateKey; //Montgomery private key
-	std::string mPublicKey; //Montgomery public key
+	std::map<std::string, std::string>* keyPair;
 	std::string filename_;
 	/*
 	* Internal methods
 	*/
 	static std::string strToHex(std::string const& s);
 	static std::string hexToStr(std::string const& s);
-	static std::map<std::string, std::string>* edwardsToMontgomery(std::map<std::string, std::string>* edwards);
+	//static std::map<std::string, std::string>* edwardsToMontgomery(std::map<std::string, std::string>* edwards);
 
 	//File methods
 	static std::map<std::string, std::string>* loadKeyPair(std::string const& filename);
