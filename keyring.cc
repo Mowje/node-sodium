@@ -23,11 +23,35 @@ using namespace v8;
 using namespace node;
 using namespace std;
 
+#define PREPARE_FUNC_VARS() \
+	HandleScope scope; \
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This()); \
+	Local<Object> globalObj = Context::GetCurrent()->Global();
+
 //Defining "invlid number of parameters" macro
 #define MANDATORY_ARGS(n, message) \
 	if (args.Length() < n){ \
-		ThrowException(TypeError(String::New(message.c_str()))); \
+		ThrowException(Exception::TypeError(String::New(message))); \
+		return scope.Close(Undefined()); \
 	}
+
+#define CHECK_KEYPAIR(type) \
+	if (instance->keyPair == 0){ \
+		ThrowException(Exception::TypeError(String::New("No key pair has been loaded into the key ring"))); \
+		return scope.Close(Undefined()); \
+	} \
+	if (instance->keyPair->at("keyType") != type){ \
+		ThrowException(Exception::TypeError(String::New("Invalid key type"))); \
+		return scope.Close(Undefined()); \
+	}
+
+#define BUILD_BUFFER(data) \
+	int resultBufferLength = strlen(data); \
+	Buffer* slowBuffer = Buffer::New(resultBufferLength); \
+	memcpy(Buffer::Data(slowBuffer), data, resultBufferLength); \
+	Local<Function> bufferConstructor = Local<Function>::Cast(globalObj->Get(String::New("Buffer"))); \
+	Handle<Value> constructorArgs[3] = { slowBuffer->handle_, Integer::New(resultBufferLength), Integer::New(0) }; \
+	Local<Object> resultBuffer = bufferConstructor->NewInstance(3, constructorArgs);
 
 Persistent<Function> KeyRing::constructor;
 
@@ -101,40 +125,178 @@ Handle<Value> KeyRing::New(const Arguments& args){
 }
 
 /**
-* Make a Curve25519 key exchange for a given public key, then encrypt the message
+* Make a Curve25519 key exchange for a given public key, then encrypt the message (crypto_box)
+* Parameters String message, Buffer publicKey, Buffer nonce, callback (optional)
+* Returns Buffer
 */
 Handle<Value> KeyRing::Encrypt(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
+	MANDATORY_ARGS(3, "Mandatory args : message, counterpartPubKey, nonce\nOptional args: callback");
+	CHECK_KEYPAIR("curve25519");
 
-	return scope.Close(Undefined());
+	String::Utf8Value messageVal(args[0]->ToString());
+	Local<Object> publicKeyVal = args[1]->ToObject();
+	Local<Object> nonceVal = args[2]->ToObject();
+
+	string message(*messageVal);
+	const unsigned char* publicKey = (unsigned char*) Buffer::Data(publicKeyVal);
+	const size_t publicKeyLength = Buffer::Length(publicKeyVal);
+	if (publicKeyLength != crypto_box_PUBLICKEYBYTES){
+		stringstream errMsg;
+		errMsg << "Public key must be " << crypto_box_PUBLICKEYBYTES << " bytes long";
+		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
+		return scope.Close(Undefined());
+	}
+	const unsigned char* nonce = (unsigned char*) Buffer::Data(nonceVal);
+	const size_t nonceLength = Buffer::Length(nonceVal);
+	if (nonceLength != crypto_box_NONCEBYTES){
+		stringstream errMsg;
+		errMsg << "The nonce must be " << crypto_box_NONCEBYTES << " bytes long";
+		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
+		return scope.Close(Undefined());
+	}
+
+	string cipher;
+	string privateKey = instance->keyPair->at("privateKey");
+	privateKey = hexToStr(privateKey);
+
+	int boxResult = crypto_box((unsigned char*) cipher.data(), (unsigned char*) message.c_str(), message.length(), nonce, publicKey, (unsigned char*) privateKey.c_str());
+	if (boxResult != 0){
+		stringstream errMsg;
+		errMsg << "Error while encrypting message. Error code : " << boxResult;
+		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
+		return scope.Close(Undefined());
+	}
+
+	BUILD_BUFFER(cipher.c_str());
+	if (args.Length() == 3){
+		return scope.Close(resultBuffer);
+	} else {
+		Local<Function> callback = Local<Function>::Cast(args[3]);
+		const int argc = 1;
+		Local<Value> argv[argc] = { resultBuffer };
+		callback->Call(globalObj, argc, argv);
+		return scope.Close(Undefined());
+	}
 }
 
+/*
+* Decrypt a message, using crypto_box_open
+* Args : Buffer cipher, Buffer publicKey, Buffer nonce, Function callback (optional)
+*/
 Handle<Value> KeyRing::Decrypt(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
+	MANDATORY_ARGS(3, "Mandatory args : cipher, counterpartPubKey, nonce\nOptional args: callback");
+	CHECK_KEYPAIR("curve25519");
 
-	return scope.Close(Undefined());
+	Local<Object> cipherVal = args[0]->ToObject();
+	Local<Object> publicKeyVal = args[1]->ToObject();
+	Local<Object> nonceVal = args[2]->ToObject();
+
+	const unsigned char* cipher = (unsigned char*) Buffer::Data(cipherVal);
+	const size_t cipherLength = Buffer::Length(cipherVal);
+
+	const unsigned char* publicKey = (unsigned char*) Buffer::Data(publicKeyVal);
+
+	const unsigned char* nonce = (unsigned char*) Buffer::Data(nonceVal);
+
+	string message;
+	string privateKey = instance->keyPair->at("keyPair");
+	privateKey = hexToStr(privateKey);
+
+	int boxResult = crypto_box_open((unsigned char*) message.data(), cipher, cipherLength, nonce, publicKey, (unsigned char*) privateKey.c_str());
+	if (boxResult != 0){
+		stringstream errMsg;
+		errMsg << "Error while decrypting message. Error code : " << boxResult;
+		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
+		return scope.Close(Undefined());
+	}
+
+	BUILD_BUFFER(message.c_str());
+	if (args.Length() == 3){
+		return scope.Close(resultBuffer);
+	} else {
+		Local<Function> callback = Local<Function>::Cast(args[3]);
+		const int argc = 1;
+		Local<Value> argv[argc] = { resultBuffer };
+		callback->Call(globalObj, argc, argv);
+		return scope.Close(Undefined());
+	}
 }
 
+/*
+* Sign a given message, using crypto_sign
+* Args: String message, Function callback (optional)
+*/
 Handle<Value> KeyRing::Sign(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
+	MANDATORY_ARGS(1, "Mandatory args : message\nOptional args: callback");
+	CHECK_KEYPAIR("ed25519");
 
-	return scope.Close(Undefined());
+	String::Utf8Value messageVal(args[0]->ToString());
+	string message(*messageVal);
+
+	string signature;
+	unsigned long long* signatureSize = new unsigned long long;
+	signature.reserve(message.length() + crypto_sign_BYTES);
+
+	string privateKey = instance->keyPair->at("privateKey");
+	privateKey = hexToStr(privateKey);
+
+	int signResult = crypto_sign((unsigned char*) signature.data(), signatureSize, (unsigned char*) message.c_str(), message.length(), (unsigned char*) privateKey.c_str());
+	if (signResult != 0){
+		stringstream errMsg;
+		errMsg << "Error while signing the message. Code : " << signResult << endl;
+		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
+		return scope.Close(Undefined());
+	}
+
+	BUILD_BUFFER(signature.c_str());
+	if (args.Length() == 1){
+		return scope.Close(resultBuffer); 
+	} else {
+		Local<Function> callback = Local<Function>::Cast(args[1]);
+		const int argc = 1;
+		Local<Value> argv[argc] = { resultBuffer };
+		callback->Call(globalObj, argc, argv);
+		return scope.Close(Undefined());
+	}
 }
 
+/*
+* Do a Curve25519 key-exchange
+* Args : Buffer counterpartPubKey, Function callback (optional)
+*/
 Handle<Value> KeyRing::Agree(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
+	MANDATORY_ARGS(1, "Mandatory args : counterpartPubKey\nOptional: callback");
+	CHECK_KEYPAIR("curve25519");
 
-	return scope.Close(Undefined());
+	Local<Object> publicKeyVal = args[0]->ToObject();
+	const unsigned char* counterpartPubKey = (unsigned char*) Buffer::Data(publicKeyVal);
+
+	string privateKey = instance->keyPair->at("privateKey");
+	privateKey = hexToStr(privateKey);
+
+	string sharedSecret;
+	sharedSecret.reserve(crypto_scalarmult_BYTES);
+	crypto_scalarmult((unsigned char*) sharedSecret.data(), (unsigned char*) privateKey.c_str(), counterpartPubKey);
+
+	BUILD_BUFFER(sharedSecret.c_str());
+	if (args.Length() == 1){
+		return scope.Close(resultBuffer);
+	} else {
+		Local<Function> callback = Local<Function>::Cast(args[1]);
+		const int argc = 1;
+		Local<Value> argv[argc] = { resultBuffer };
+		callback->Call(globalObj, argc, argv);
+		return scope.Close(Undefined());
+	}
 }
 
 //Function callback (optional)
 Handle<Value> KeyRing::PublicKeyInfo(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
 	//Checking that a keypair is loaded in memory
 	if (instance->keyPair == 0){
 		ThrowException(Exception::TypeError(String::New("No key has been loaded into memory")));
@@ -147,7 +309,7 @@ Handle<Value> KeyRing::PublicKeyInfo(const Arguments& args){
 		Local<Function> callback = Local<Function>::Cast(args[0]);
 		const unsigned argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
-		callback->Call(Context::GetCurrent()->Global(), argc, argv);
+		callback->Call(globalObj, argc, argv);
 		return scope.Close(Undefined());
 	}
 }
@@ -169,11 +331,8 @@ Local<Object> KeyRing::PPublicKeyInfo(){
 * String keyType, String filename [optional], Function callback [optional]
 */
 Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
-	if (args.Length() < 1){
-
-	}
+	PREPARE_FUNC_VARS();
+	MANDATORY_ARGS(1, "Please give the type of the key you want to generate");
 	String::Utf8Value keyTypeVal(args[0]->ToString());
 	string keyType(*keyTypeVal);
 	if (!(keyType == "ed25519" || keyType == "curve25519")) {
@@ -218,30 +377,29 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		Local<Function> callback = Local<Function>::Cast(args[2]);
 		const unsigned argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
-		callback->Call(Context::GetCurrent()->Global(), argc, argv);
+		callback->Call(globalObj, argc, argv);
 		return scope.Close(Undefined());
 	} else {
 		return scope.Close(instance->PPublicKeyInfo());
 	}
 }
 
+// String filename, Function callback (optional)
 Handle<Value> KeyRing::Load(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
 
 	return scope.Close(Undefined());
 }
 
+// String filename, Function callback (optional)
 Handle<Value> KeyRing::Save(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
 
 	return scope.Close(Undefined());
 }
 
 Handle<Value> KeyRing::Clear(const Arguments& args){
-	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	PREPARE_FUNC_VARS();
 	if (instance->keyPair != 0){
 		delete instance->keyPair;
 		instance->keyPair = 0;
