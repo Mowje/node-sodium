@@ -1,4 +1,4 @@
-#define BUILDING_NODE_EXTENSION
+//#define BUILDING_NODE_EXTENSION
 
 #include <iostream>
 
@@ -62,6 +62,7 @@ KeyRing::KeyRing(string filename) : filename_(filename){
 			return;
 		}
 		keyPair = loadKeyPair(filename);
+		filename_ = filename;
 	}
 }
 
@@ -339,6 +340,7 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		ThrowException(Exception::TypeError(String::New("Invalid key type")));
 		return scope.Close(Undefined());
 	}
+	cout << "keyType: " << keyType << endl;
 	//Preparing new keypair map
 	map<string, string>* newKeyPair = new map<string, string>();
 	//Delete the keypair loaded in memory, if any
@@ -346,13 +348,14 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		delete instance->keyPair;
 		instance->keyPair = 0;
 	}
+	cout << "keypair deleted" << endl;
 	instance->keyPair = newKeyPair;
-
 	if (keyType == "ed25519"){
 		string privateKey, publicKey;
 		publicKey.reserve(32);
 		privateKey.reserve(64);
 		crypto_sign_keypair((unsigned char*)publicKey.data(), (unsigned char*)privateKey.data());
+		cout << "Publickey : " << publicKey << endl << "Privatekey : " << privateKey << endl;
 
 		newKeyPair->insert(make_pair("keyType", "ed25519"));
 		newKeyPair->insert(make_pair("privateKey", strToHex(privateKey)));
@@ -362,6 +365,7 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		publicKey.reserve(32);
 		privateKey.reserve(32);
 		crypto_box_keypair((unsigned char*)publicKey.data(), (unsigned char*)privateKey.data());
+		cout << "Publickey : " << publicKey << endl << "Privatekey : " << privateKey << endl;
 
 		newKeyPair->insert(make_pair("keyType", "curve25519"));
 		newKeyPair->insert(make_pair("privateKey", strToHex(privateKey)));
@@ -372,6 +376,7 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		String::Utf8Value filenameVal(args[1]->ToString());
 		string filename(*filenameVal);
 		saveKeyPair(filename, instance->keyPair);
+		instance->filename_ = filename;
 	}
 	if (args.Length() == 3){ //Callback
 		Local<Function> callback = Local<Function>::Cast(args[2]);
@@ -387,19 +392,68 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 // String filename, Function callback (optional)
 Handle<Value> KeyRing::Load(const Arguments& args){
 	PREPARE_FUNC_VARS();
+	MANDATORY_ARGS(1, "Mandatory args : String filename\nOptional args : Function callback");
 
-	return scope.Close(Undefined());
+	String::Utf8Value filenameVal(args[0]->ToString());
+	string filename(*filenameVal);
+
+	map<string, string>* newKeyPair;
+	try {
+		newKeyPair = loadKeyPair(filename);
+		instance->keyPair = newKeyPair;
+		instance->filename_ = filename;
+	} catch (runtime_error* e){
+		string errMsg = e->what();
+		ThrowException(Exception::TypeError(String::New(errMsg.c_str())));
+		return scope.Close(Undefined());
+	}
+
+	if (args.Length() == 1){
+		return scope.Close( instance->PPublicKeyInfo() );
+	} else {
+		Local<Function> callback = Local<Function>::Cast(args[1]);
+		const int argc = 1;
+		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
+		callback->Call(globalObj, argc, argv);
+		return scope.Close(Undefined());
+	}
 }
 
 // String filename, Function callback (optional)
 Handle<Value> KeyRing::Save(const Arguments& args){
 	PREPARE_FUNC_VARS();
+	MANDATORY_ARGS(1, "Mandatory args : String filename\nOptional args : Function callback");
 
-	return scope.Close(Undefined());
+	if (instance->keyPair == 0){ //Checking that a key is indeed defined. If not, throw an exception
+		ThrowException(Exception::TypeError(String::New("No key has been loaded into the keyring")));
+		return scope.Close(Undefined());
+	}
+
+	String::Utf8Value filenameVal(args[0]);
+	string filename(*filenameVal);
+
+	try {
+		saveKeyPair(filename, instance->keyPair);
+	} catch (runtime_error* e){
+		string errMsg = e->what();
+		ThrowException(Exception::TypeError(String::New(errMsg.c_str())));
+		return scope.Close(Undefined());
+	}
+
+	if (args.Length() == 1){
+		return scope.Close(Undefined());
+	} else {
+		Local<Function> callback = Local<Function>::Cast(args[1]);
+		const int argc = 0;
+		Local<Value> argv[argc];
+		callback->Call(globalObj, argc, argv);
+		return scope.Close(Undefined());
+	}
 }
 
 Handle<Value> KeyRing::Clear(const Arguments& args){
-	PREPARE_FUNC_VARS();
+	HandleScope scope;
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
 	if (instance->keyPair != 0){
 		delete instance->keyPair;
 		instance->keyPair = 0;
@@ -455,9 +509,124 @@ bool KeyRing::doesFileExist(string const& filename){
 
 void KeyRing::saveKeyPair(string const& filename, map<string, string>* keyPair){
 	fstream fileWriter(filename.c_str(), ios::out | ios::trunc);
-	
+	string params[] = {"keyType", "privateKey", "publicKey"};
+	for (int i = 0; i < 3; i++){
+		if (!(keyPair->count(params[i]) > 0)) throw new runtime_error("Missing parameter when saving file : " + params[i]);
+	}
+	string* keyType = &(keyPair->at("keyType"));
+	string* privateKey = &(keyPair->at("privateKey"));
+	string* publicKey = &(keyPair->at("publicKey"));
+	if (*keyType == "curve25519"){
+		//Writing key type
+		fileWriter << (char) 0x05;
+		//Writing public key length
+		fileWriter << (char) (crypto_box_PUBLICKEYBYTES >> 8);
+		fileWriter << (char) (crypto_box_PUBLICKEYBYTES);
+		//Writing public key
+		fileWriter << hexToStr(*publicKey);
+		//Writing private key length
+		fileWriter << (char) (crypto_box_SECRETKEYBYTES >> 8);
+		fileWriter << (char) crypto_box_SECRETKEYBYTES;
+		//Writing the private key
+		fileWriter << hexToStr(*privateKey);
+	} else if (*keyType == "ed25519"){
+		//Writing key type
+		fileWriter << (char) 0x06;
+		//Writing public key length
+		fileWriter << (char) (crypto_sign_PUBLICKEYBYTES >> 8);
+		fileWriter << (char) crypto_sign_PUBLICKEYBYTES;
+		//Writing the public key
+		fileWriter << hexToStr(*publicKey);
+		//Writing private key length
+		fileWriter << (char) (crypto_sign_SECRETKEYBYTES >> 8);
+		fileWriter << (char) crypto_sign_SECRETKEYBYTES;
+		//Writing the private key
+		fileWriter << hexToStr(*privateKey);
+	} else throw new runtime_error("Unknown key type: " + *keyType);
+	fileWriter.close();
 }
 
 map<string, string>* KeyRing::loadKeyPair(string const& filename){
-
+	fstream fileReader(filename.c_str(), ios::in);
+	string keyStr;
+	getline(fileReader, keyStr);
+	fileReader.close();
+	stringstream keyStream(keyStr);
+	stringbuf* buffer = keyStream.rdbuf();
+	//Declaring the keyPair map
+	map<string, string>* keyPair;
+	//Reading the keytype
+	char keyType = buffer->sbumpc();
+	if (!(keyType == 0x05 || keyType == 0x06)){ //Checking that the key type is valid
+		stringstream errMsg;
+		errMsg << "Invalid key type: " << (int) keyType;
+		throw new runtime_error(errMsg.str());
+	}
+	keyPair = new map<string, string>();
+	int publicKeyLength, privateKeyLength;
+	string publicKey = "", privateKey = "";
+	if (keyType == 0x05){ //Curve25519
+		//Getting public key length
+		publicKeyLength = ((int) buffer->sbumpc()) << 8;
+		publicKeyLength += (int) buffer->sbumpc();
+		if (publicKeyLength != crypto_box_PUBLICKEYBYTES){ //Checking key length
+			stringstream errMsg;
+			errMsg << "Invalid public key length : " << publicKeyLength;
+			throw new runtime_error(errMsg.str());
+		}
+		//Getting public key
+		for (int i = 0; i < publicKeyLength; i++){
+			publicKey += (char) buffer->sbumpc();
+		}
+		publicKey = strToHex(publicKey);
+		//Getting private key length
+		privateKeyLength = ((int) buffer->sbumpc()) << 8;
+		privateKeyLength += (int) buffer->sbumpc();
+		if (privateKeyLength != crypto_box_SECRETKEYBYTES){ //Checking key length
+			stringstream errMsg;
+			errMsg << "Invalid private key length : " << privateKeyLength;
+			throw new runtime_error(errMsg.str()); 
+		}
+		//Getting private key
+		for (int i = 0; i < privateKeyLength; i++){
+			privateKey += (char) buffer->sbumpc();
+		}
+		privateKey = strToHex(privateKey);
+		//Building keypair map
+		keyPair->insert(make_pair("keyType", "curve25519"));
+		keyPair->insert(make_pair("publicKey", publicKey));
+		keyPair->insert(make_pair("privateKey", privateKey));
+	} else if (keyType == 0x06){ //Ed25519
+		//Getting public key length
+		publicKeyLength = ((int) buffer->sbumpc()) << 8;
+		publicKeyLength += (int) buffer->sbumpc();
+		if (publicKeyLength != crypto_sign_PUBLICKEYBYTES){ //Checking key length
+			stringstream errMsg;
+			errMsg << "Invalid public key length : " << publicKeyLength;
+			throw new runtime_error(errMsg.str());
+		}
+		//Getting public key
+		for (int i = 0; i < publicKeyLength; i++){
+			publicKey += (char) buffer->sbumpc();
+		}
+		publicKey = strToHex(publicKey);
+		//Getting private key length
+		privateKeyLength = ((int) buffer->sbumpc()) << 8;
+		privateKeyLength += (int) buffer->sbumpc();
+		if (privateKeyLength != crypto_sign_SECRETKEYBYTES){ //Cheking key length
+			stringstream errMsg;
+			errMsg << "Invalid private key length : " << privateKeyLength;
+			throw new runtime_error(errMsg.str());
+		}
+		//Getting private key
+		for (int i = 0; i < privateKeyLength; i++){
+			privateKey += (char) buffer->sbumpc();
+		}
+		privateKey = strToHex(privateKey);
+		//Building keypair map
+		keyPair->insert(make_pair("keyType", "ed25519"));
+		keyPair->insert(make_pair("publicKey", publicKey));
+		keyPair->insert(make_pair("privateKey", privateKey));
+	}
+	return keyPair;
 }
