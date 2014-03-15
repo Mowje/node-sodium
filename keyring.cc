@@ -55,7 +55,7 @@ using namespace std;
 
 Persistent<Function> KeyRing::constructor;
 
-KeyRing::KeyRing(string filename) : filename_(filename){
+KeyRing::KeyRing(string filename) : keyPair(0), filename_(filename){
 	if (filename != ""){
 		if (!doesFileExist(filename)){
 			//Throw a V8 exception??
@@ -127,7 +127,7 @@ Handle<Value> KeyRing::New(const Arguments& args){
 
 /**
 * Make a Curve25519 key exchange for a given public key, then encrypt the message (crypto_box)
-* Parameters String message, Buffer publicKey, Buffer nonce, callback (optional)
+* Parameters Buffer message, Buffer publicKey, Buffer nonce, callback (optional)
 * Returns Buffer
 */
 Handle<Value> KeyRing::Encrypt(const Arguments& args){
@@ -135,11 +135,13 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 	MANDATORY_ARGS(3, "Mandatory args : message, counterpartPubKey, nonce\nOptional args: callback");
 	CHECK_KEYPAIR("curve25519");
 
-	String::Utf8Value messageVal(args[0]->ToString());
+	Local<Object> messageVal = args[0]->ToObject();
 	Local<Object> publicKeyVal = args[1]->ToObject();
 	Local<Object> nonceVal = args[2]->ToObject();
 
-	string message(*messageVal);
+	const unsigned char* message = (unsigned char*) Buffer::Data(messageVal);
+	const size_t messageLength = Buffer::Length(messageVal);
+
 	const unsigned char* publicKey = (unsigned char*) Buffer::Data(publicKeyVal);
 	const size_t publicKeyLength = Buffer::Length(publicKeyVal);
 	if (publicKeyLength != crypto_box_PUBLICKEYBYTES){
@@ -157,11 +159,18 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 		return scope.Close(Undefined());
 	}
 
-	string cipher;
+	unsigned char* paddedMessage = new unsigned char[messageLength + crypto_box_ZEROBYTES];
+	for (unsigned int i = 0; i < crypto_box_ZEROBYTES; i++){
+		paddedMessage[i] = 0;
+	}
+	memcpy((void*) (paddedMessage + crypto_box_ZEROBYTES), (void*) message, messageLength);
+
+	Buffer* cipherBuf = Buffer::New(messageLength + crypto_box_ZEROBYTES);
+	unsigned char* cipher = (unsigned char*)Buffer::Data(cipherBuf);
 	string privateKey = instance->keyPair->at("privateKey");
 	privateKey = hexToStr(privateKey);
 
-	int boxResult = crypto_box((unsigned char*) cipher.data(), (unsigned char*) message.c_str(), message.length(), nonce, publicKey, (unsigned char*) privateKey.c_str());
+	int boxResult = crypto_box(cipher, paddedMessage, messageLength + crypto_box_ZEROBYTES, nonce, publicKey, (unsigned char*) privateKey.c_str());
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while encrypting message. Error code : " << boxResult;
@@ -169,10 +178,11 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 		return scope.Close(Undefined());
 	}
 
-	BUILD_BUFFER(cipher.c_str());
+	//BUILD_BUFFER(string((char*) cipher, message.length()).c_str());
 	if (args.Length() == 3){
-		return scope.Close(resultBuffer);
+		return scope.Close(cipherBuf->handle_);
 	} else {
+		BUILD_BUFFER(string((char*)cipher, messageLength + crypto_box_ZEROBYTES).c_str());
 		Local<Function> callback = Local<Function>::Cast(args[3]);
 		const int argc = 1;
 		Local<Value> argv[argc] = { resultBuffer };
@@ -197,15 +207,27 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 	const unsigned char* cipher = (unsigned char*) Buffer::Data(cipherVal);
 	const size_t cipherLength = Buffer::Length(cipherVal);
 
+	//Checking that the first crypto_box_BOXZEROBYTES are zeros
+	unsigned int i = 0;
+	for (i = 0; i < crypto_box_BOXZEROBYTES; i++){
+		if (cipher[i]) break;
+	}
+	if (i < crypto_box_BOXZEROBYTES){
+		stringstream errMsg;
+		errMsg << "The first " << crypto_box_BOXZEROBYTES << " bytes of the cipher argument must be zeros";
+		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
+		return scope.Close(Undefined());
+	}
+
 	const unsigned char* publicKey = (unsigned char*) Buffer::Data(publicKeyVal);
 
 	const unsigned char* nonce = (unsigned char*) Buffer::Data(nonceVal);
 
-	string message;
-	string privateKey = instance->keyPair->at("keyPair");
+	unsigned char* message = new unsigned char[cipherLength];
+	string privateKey = instance->keyPair->at("privateKey");
 	privateKey = hexToStr(privateKey);
 
-	int boxResult = crypto_box_open((unsigned char*) message.data(), cipher, cipherLength, nonce, publicKey, (unsigned char*) privateKey.c_str());
+	int boxResult = crypto_box_open(message, cipher, cipherLength, nonce, publicKey, (unsigned char*) privateKey.c_str());
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while decrypting message. Error code : " << boxResult;
@@ -213,7 +235,11 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 		return scope.Close(Undefined());
 	}
 
-	BUILD_BUFFER(message.c_str());
+	unsigned char* plaintext = new unsigned char[cipherLength - crypto_box_ZEROBYTES];
+	memcpy(plaintext, (void*) (message + crypto_box_ZEROBYTES), cipherLength - crypto_box_ZEROBYTES);
+
+
+	BUILD_BUFFER(string((char*)plaintext, cipherLength - crypto_box_ZEROBYTES).c_str());
 	if (args.Length() == 3){
 		return scope.Close(resultBuffer);
 	} else {
@@ -279,11 +305,10 @@ Handle<Value> KeyRing::Agree(const Arguments& args){
 	string privateKey = instance->keyPair->at("privateKey");
 	privateKey = hexToStr(privateKey);
 
-	string sharedSecret;
-	sharedSecret.reserve(crypto_scalarmult_BYTES);
-	crypto_scalarmult((unsigned char*) sharedSecret.data(), (unsigned char*) privateKey.c_str(), counterpartPubKey);
+	unsigned char* sharedSecret = new unsigned char[crypto_scalarmult_BYTES];
+	crypto_scalarmult(sharedSecret, (unsigned char*) privateKey.c_str(), counterpartPubKey);
 
-	BUILD_BUFFER(sharedSecret.c_str());
+	BUILD_BUFFER(string((char*) sharedSecret, crypto_scalarmult_BYTES).c_str());
 	if (args.Length() == 1){
 		return scope.Close(resultBuffer);
 	} else {
@@ -340,7 +365,6 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		ThrowException(Exception::TypeError(String::New("Invalid key type")));
 		return scope.Close(Undefined());
 	}
-	cout << "keyType: " << keyType << endl;
 	//Preparing new keypair map
 	map<string, string>* newKeyPair = new map<string, string>();
 	//Delete the keypair loaded in memory, if any
@@ -348,28 +372,23 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		delete instance->keyPair;
 		instance->keyPair = 0;
 	}
-	cout << "keypair deleted" << endl;
 	instance->keyPair = newKeyPair;
 	if (keyType == "ed25519"){
-		string privateKey, publicKey;
-		publicKey.reserve(32);
-		privateKey.reserve(64);
-		crypto_sign_keypair((unsigned char*)publicKey.data(), (unsigned char*)privateKey.data());
-		cout << "Publickey : " << publicKey << endl << "Privatekey : " << privateKey << endl;
+		unsigned char* privateKey = new unsigned char[crypto_sign_SECRETKEYBYTES];
+		unsigned char* publicKey = new unsigned char[crypto_sign_PUBLICKEYBYTES];
+		crypto_sign_keypair(publicKey, privateKey);
 
 		newKeyPair->insert(make_pair("keyType", "ed25519"));
-		newKeyPair->insert(make_pair("privateKey", strToHex(privateKey)));
-		newKeyPair->insert(make_pair("publicKey", strToHex(publicKey)));
+		newKeyPair->insert(make_pair("privateKey", strToHex(string((char *)privateKey, crypto_sign_SECRETKEYBYTES))));
+		newKeyPair->insert(make_pair("publicKey", strToHex(string((char *)publicKey, crypto_sign_PUBLICKEYBYTES))));
 	} else if (keyType == "curve25519"){
-		string privateKey, publicKey;
-		publicKey.reserve(32);
-		privateKey.reserve(32);
-		crypto_box_keypair((unsigned char*)publicKey.data(), (unsigned char*)privateKey.data());
-		cout << "Publickey : " << publicKey << endl << "Privatekey : " << privateKey << endl;
+		unsigned char* privateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
+		unsigned char* publicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
+		crypto_box_keypair(publicKey, privateKey);
 
 		newKeyPair->insert(make_pair("keyType", "curve25519"));
-		newKeyPair->insert(make_pair("privateKey", strToHex(privateKey)));
-		newKeyPair->insert(make_pair("publicKey", strToHex(publicKey)));
+		newKeyPair->insert(make_pair("privateKey", strToHex(string((char *)privateKey, crypto_box_SECRETKEYBYTES))));
+		newKeyPair->insert(make_pair("publicKey", strToHex(string((char *)publicKey, crypto_box_PUBLICKEYBYTES))));
 	}
 
 	if (args.Length() >= 2 && !args[1]->IsUndefined()){ //Save keypair to file
