@@ -34,3 +34,22 @@ var plaintext2 = keyring1.decrypt(cipher2, new Buffer(pubKey2.publicKey, 'hex'),
 console.log('Plaintext 1 : ' + plaintext1.toString() + '\nPlaintext 2 : ' + plaintext2.toString());
 assert.equal(message1, plaintext1.toString(), 'Initial message 1 and decrypted message aren\'t identitcal!');
 assert.equal(message2, plaintext2.toString(), 'Initial message 2 and decrypted message aren\'t identitcal!');
+
+//Ed25519 signatures
+pubKey1 = keyring1.createKeyPair('ed25519');
+pubKey2 = keyring2.createKeyPair('ed25519');
+console.log('Public key 1 : ' + JSON.stringify(pubKey1) + '\nPublic key 2 : ' + JSON.stringify(pubKey2));
+
+var signature1 = keyring1.sign(new Buffer(message1));
+var signature2 = keyring2.sign(new Buffer(message2));
+console.log('Signature 1 : ' + signature1.toString('hex'));
+console.log('Signature 2 : ' + signature2.toString('hex'));
+
+var isValid1 = sodium.crypto_sign_open(signature1, new Buffer(pubKey1.publicKey, 'hex'));
+var isValid2 = sodium.crypto_sign_open(signature2, new Buffer(pubKey2.publicKey, 'hex'));
+console.log('isValid1 : ' + isValid1.toString());
+console.log('isValid2 : ' + isValid2.toString());
+assert.equal(isValid1.toString(), message1, 'Signature 1 is invalid');
+assert.equal(isValid2.toString(), message2, 'Signature 2 is invalid');
+
+//key saving and loading

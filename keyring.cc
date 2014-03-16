@@ -253,24 +253,26 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 
 /*
 * Sign a given message, using crypto_sign
-* Args: String message, Function callback (optional)
+* Args: Buffer message, Function callback (optional)
 */
 Handle<Value> KeyRing::Sign(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : message\nOptional args: callback");
 	CHECK_KEYPAIR("ed25519");
 
-	String::Utf8Value messageVal(args[0]->ToString());
-	string message(*messageVal);
+	Local<Value> messageVal = args[0]->ToObject();
+
+	const unsigned char* message = (unsigned char*) Buffer::Data(messageVal);
+	const size_t messageLength = Buffer::Length(messageVal);
 
 	string signature;
 	unsigned long long* signatureSize = new unsigned long long;
-	signature.reserve(message.length() + crypto_sign_BYTES);
+	signature.reserve(messageLength + crypto_sign_BYTES);
 
 	string privateKey = instance->keyPair->at("privateKey");
 	privateKey = hexToStr(privateKey);
 
-	int signResult = crypto_sign((unsigned char*) signature.data(), signatureSize, (unsigned char*) message.c_str(), message.length(), (unsigned char*) privateKey.c_str());
+	int signResult = crypto_sign((unsigned char*) signature.data(), signatureSize, (unsigned char*) message, messageLength, (unsigned char*) privateKey.c_str());
 	if (signResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while signing the message. Code : " << signResult << endl;
