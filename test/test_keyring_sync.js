@@ -13,7 +13,7 @@ keyring2.save('./c25519-2.key');
 
 var message1 = 'Message1', message2 = 'Message2';
 
-var testCurve25519 = function(){
+var testCurve25519 = function(callback){
 	console.log('Public key 1 : ' + JSON.stringify(pubKey1) + '\nPublic key 2 : ' + JSON.stringify(pubKey2));
 	console.log('Performing a key exchange');
 	var shared1 = keyring1.agree(new Buffer(pubKey2.publicKey, 'hex'));
@@ -38,16 +38,13 @@ var testCurve25519 = function(){
 	console.log('Plaintext 1 : ' + plaintext1.toString() + '\nPlaintext 2 : ' + plaintext2.toString());
 	assert.equal(message1, plaintext1.toString(), 'Initial message 1 and decrypted message aren\'t identitcal!');
 	assert.equal(message2, plaintext2.toString(), 'Initial message 2 and decrypted message aren\'t identitcal!');
+	
+	if (callback && typeof callback == 'function') callback();
 };
-testCurve25519();
-
 //Ed25519 signatures
-pubKey1 = keyring1.createKeyPair('ed25519');
-pubKey2 = keyring2.createKeyPair('ed25519');
-keyring1.save('./ed25519-1.key');
-keyring2.save('./ed25519-2.key');
 
-var testSignatures = function(){
+
+var testSignatures = function(callback){
 	console.log('Public key 1 : ' + JSON.stringify(pubKey1) + '\nPublic key 2 : ' + JSON.stringify(pubKey2));
 	var signature1 = keyring1.sign(new Buffer(message1));
 	var signature2 = keyring2.sign(new Buffer(message2));
@@ -60,16 +57,26 @@ var testSignatures = function(){
 	console.log('isValid2 : ' + isValid2.toString());
 	assert.equal(isValid1.toString(), message1, 'Signature 1 is invalid');
 	assert.equal(isValid2.toString(), message2, 'Signature 2 is invalid');
+
+	if (callback && typeof callback == 'function') callback();
 };
-testSignatures();
 
-//key saving and loading
-console.log('Reloading curve25519 keys')
-pubKey1 = keyring1.load('./c25519-1.key');
-pubKey2 = keyring2.load('./c25519-2.key');
-testCurve25519();
+testCurve25519(function(){
+	pubKey1 = keyring1.createKeyPair('ed25519');
+	pubKey2 = keyring2.createKeyPair('ed25519');
+	keyring1.save('./ed25519-1.key');
+	keyring2.save('./ed25519-2.key');
 
-console.log('Reloading Ed25519 keys');
-pubKey1 = keyring1.load('./ed25519-1.key');
-pubKey2 = keyring2.load('./ed25519-2.key');
-testSignatures();
+	testSignatures(function(){
+		//key saving and loading
+		console.log('Reloading curve25519 keys')
+		pubKey1 = keyring1.load('./c25519-1.key');
+		pubKey2 = keyring2.load('./c25519-2.key');
+		testCurve25519(function(){
+			console.log('Reloading Ed25519 keys');
+			pubKey1 = keyring1.load('./ed25519-1.key');
+			pubKey2 = keyring2.load('./ed25519-2.key');
+			testSignatures();
+		});
+	});
+});
