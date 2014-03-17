@@ -20,6 +20,14 @@ Just a quick example that uses the same public/secret key pair to encrypt and th
     var cipherText = box.encrypt("This is a secret message", "utf8");
     var plainText = box.decrypt(cipherText);
     
+
+# Use the `KeyRing`
+
+Because javascript uses garbage collecting, it could be considered as unsafe to store long term private keys into JS variables. Indeed, we have no control over the time that this kind of data is kept in memory before being effectively deleted (even though all references to such variable might have been deleted/lost a long time ago).
+
+Hence we build `sodium.KeyRing` that will generate, hold the private key and do the cryptographic operations that require it. It also load/save keypairs into files on the disk. We can extract the public key from the `KeyRing`, but not the private key.
+
+Check [`docs/keyring-api.md`](https://github.com/Tashweesh/node-sodium/tree/master/docs/keyring-api.md) for the list of methods of `KeyRing` and more details on how to use this class.
     
 # Low Level API
 A low level API is provided for advanced users. The functions available through the low level API have the exact same names as in lib sodium, and are available via the `sodium.api` object. Here is one example of how to use some of the low level API functions to encrypt/decrypt a message:
