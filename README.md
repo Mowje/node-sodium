@@ -70,10 +70,14 @@ Lib Sodium is somewhat documented [here](http://mob5.host.cs.st-andrews.ac.uk/ht
 
 # Install
 
-Tested on Mac and Linux
+Tested on Mac. May work on Linux without any modification.
 
     npm install git+ssh://git@github.com:Tashweesh/node-sodium.git
-    
+
+Or
+
+    npm install git+https://github.com:Tashweesh/node-sodium.git
+
 node-sodium depends on lib sodium, so if lib sodium does not compile on your platform chances are that process will fail.
 
 # Manual Install
