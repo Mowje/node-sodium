@@ -72,9 +72,9 @@ Lib Sodium is somewhat documented [here](http://mob5.host.cs.st-andrews.ac.uk/ht
 
 Tested on Mac and Linux
 
-    npm install sodium
+    npm install git+ssh://git@github.com:Tashweesh/node-sodium.git
     
-node-sodium depends on lib sodium, so if lib sodium does not compile on your platform chances are `npm install sodium` will fail.
+node-sodium depends on lib sodium, so if lib sodium does not compile on your platform chances are that process will fail.
 
 # Manual Install
 Clone this git repository, and change to the local directory where you ran git clone to, 
