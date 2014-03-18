@@ -13,3 +13,4 @@ node-sodium.sublime-project
 node-sodium.sublime-workspace
 
 */*.key
+*.key

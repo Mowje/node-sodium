@@ -36,6 +36,11 @@ git-pull:
 	git submodule update
 	git submodule status
 
+git-getsodium:
+	git init
+	git submodule add https://github.com/jedisct1/libsodium.git
+	git submodule update
+
 clean:
 	-rm -fr lib-cov
 	-rm -fr covershot
