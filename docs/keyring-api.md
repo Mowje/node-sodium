@@ -5,7 +5,7 @@ To initialize a `KeyRing` object:
 
 ```js
 var sodium = require('sodium');
-var keyring = new sodium.KeyRing();
+var keyring = new sodium.api.KeyRing();
 ```
 
 **NOTE:**
