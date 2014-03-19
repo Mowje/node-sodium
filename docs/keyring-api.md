@@ -9,13 +9,16 @@ var keyring = new sodium.KeyRing();
 ```
 
 **NOTE:**
+
 ----------------------
+
 Don't forget to call the `clear` method once you're done using the keypair loaded in the keyring. Otherwise the keys might stay in memory (ie, memory leak, in between security issues in case the memory is dumped)
 
 Also, when you want to skip an optional parameter but want to define an other parameter that follows it, you must set the first one to `undefined`. Sorry for the inconvenience.
 
 Additionally :
 `encrypt`, `decrypt`, `agree` can be called when the loaded key pair is a Curve25519 one. `sign` can be called when the loaded key pair is a Ed25519 one. In case it's not respected, an exception will be thrown.
+
 ----------------------
 
 ## Methods :
