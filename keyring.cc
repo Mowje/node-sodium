@@ -36,11 +36,11 @@ using namespace std;
 	}
 
 #define CHECK_KEYPAIR(type) \
-	if (instance->keyPair == 0){ \
+	if (instance->_keyType == ""){ \
 		ThrowException(Exception::TypeError(String::New("No key pair has been loaded into the key ring"))); \
 		return scope.Close(Undefined()); \
 	} \
-	if (instance->keyPair->at("keyType") != type){ \
+	if (instance->_keyType != type){ \
 		ThrowException(Exception::TypeError(String::New("Invalid key type"))); \
 		return scope.Close(Undefined()); \
 	}
@@ -55,21 +55,25 @@ using namespace std;
 
 Persistent<Function> KeyRing::constructor;
 
-KeyRing::KeyRing(string filename) : keyPair(0), filename_(filename){
+KeyRing::KeyRing(string filename) : _filename(filename), _privateKey(0), _publicKey(0){
 	if (filename != ""){
 		if (!doesFileExist(filename)){
 			//Throw a V8 exception??
 			return;
 		}
-		keyPair = loadKeyPair(filename);
-		filename_ = filename;
+		loadKeyPair(filename, &_keyType, _privateKey, _publicKey);
+		_filename = filename;
 	}
 }
 
 KeyRing::~KeyRing(){
-	if (keyPair != 0){
-		delete keyPair;
-		keyPair = 0;
+	if (_privateKey != 0){
+		delete _privateKey;
+		_privateKey = 0;
+	}
+	if (_publicKey != 0){
+		delete _publicKey;
+		_publicKey = 0;
 	}
 }
 
@@ -167,10 +171,8 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 
 	Buffer* cipherBuf = Buffer::New(messageLength + crypto_box_ZEROBYTES);
 	unsigned char* cipher = (unsigned char*)Buffer::Data(cipherBuf);
-	string privateKey = instance->keyPair->at("privateKey");
-	privateKey = hexToStr(privateKey);
 
-	int boxResult = crypto_box(cipher, paddedMessage, messageLength + crypto_box_ZEROBYTES, nonce, publicKey, (unsigned char*) privateKey.c_str());
+	int boxResult = crypto_box(cipher, paddedMessage, messageLength + crypto_box_ZEROBYTES, nonce, publicKey, instance->_privateKey);
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while encrypting message. Error code : " << boxResult;
@@ -224,10 +226,8 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 	const unsigned char* nonce = (unsigned char*) Buffer::Data(nonceVal);
 
 	unsigned char* message = new unsigned char[cipherLength];
-	string privateKey = instance->keyPair->at("privateKey");
-	privateKey = hexToStr(privateKey);
 
-	int boxResult = crypto_box_open(message, cipher, cipherLength, nonce, publicKey, (unsigned char*) privateKey.c_str());
+	int boxResult = crypto_box_open(message, cipher, cipherLength, nonce, publicKey, instance->_privateKey);
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while decrypting message. Error code : " << boxResult;
@@ -269,10 +269,7 @@ Handle<Value> KeyRing::Sign(const Arguments& args){
 	unsigned char* signature = (unsigned char*) Buffer::Data(signatureBuf);
 	unsigned long long signatureSize;
 
-	string privateKey = instance->keyPair->at("privateKey");
-	privateKey = hexToStr(privateKey);
-
-	int signResult = crypto_sign(signature, &signatureSize, message, messageLength, (unsigned char*) privateKey.c_str());
+	int signResult = crypto_sign(signature, &signatureSize, message, messageLength, instance->_privateKey);
 	if (signResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while signing the message. Code : " << signResult << endl;
@@ -306,12 +303,9 @@ Handle<Value> KeyRing::Agree(const Arguments& args){
 	Local<Object> publicKeyVal = args[0]->ToObject();
 	const unsigned char* counterpartPubKey = (unsigned char*) Buffer::Data(publicKeyVal);
 
-	string privateKey = instance->keyPair->at("privateKey");
-	privateKey = hexToStr(privateKey);
-
 	Buffer* sharedSecretBuf = Buffer::New(crypto_scalarmult_BYTES);
 	unsigned char* sharedSecret = (unsigned char*) Buffer::Data(sharedSecretBuf);
-	crypto_scalarmult(sharedSecret, (unsigned char*) privateKey.c_str(), counterpartPubKey);
+	crypto_scalarmult(sharedSecret, instance->_privateKey, counterpartPubKey);
 
 	if (args.Length() == 1){
 		return scope.Close(sharedSecretBuf->handle_);
@@ -329,7 +323,7 @@ Handle<Value> KeyRing::Agree(const Arguments& args){
 Handle<Value> KeyRing::PublicKeyInfo(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	//Checking that a keypair is loaded in memory
-	if (instance->keyPair == 0){
+	if (instance->_keyType == "" || instance->_privateKey == 0 || instance->_publicKey == 0){
 		ThrowException(Exception::TypeError(String::New("No key has been loaded into memory")));
 		return scope.Close(Undefined());
 	}
@@ -347,13 +341,16 @@ Handle<Value> KeyRing::PublicKeyInfo(const Arguments& args){
 
 Local<Object> KeyRing::PPublicKeyInfo(){
 	Local<Object> pubKeyObj = Object::New();
-	if (keyPair == 0){
+	if (_keyType == "" || _privateKey == 0 || _publicKey == 0){
 		throw new runtime_error("No loaded key pair");
 	}
-	string keyType = keyPair->at("keyType");
-	string publicKey = keyPair->at("publicKey");
-	pubKeyObj->Set(String::NewSymbol("keyType"), String::New(keyType.c_str()));
+	cout << "Loaded key pair" << endl;
+	//string keyType = keyPair->at("keyType");
+	string publicKey = strToHex(string((char*) _publicKey, ((_keyType == "ed25519") ? crypto_sign_PUBLICKEYBYTES : crypto_box_PUBLICKEYBYTES)));
+	cout << "Public key string constructed" << endl;
+	pubKeyObj->Set(String::NewSymbol("keyType"), String::New(_keyType.c_str()));
 	pubKeyObj->Set(String::NewSymbol("publicKey"), String::New(publicKey.c_str()));
+	cout << "pubKeyObject constructed" << endl;
 	return pubKeyObj;
 }
 
@@ -370,41 +367,56 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		ThrowException(Exception::TypeError(String::New("Invalid key type")));
 		return scope.Close(Undefined());
 	}
-	//Preparing new keypair map
-	map<string, string>* newKeyPair = new map<string, string>();
-	//Delete the keypair loaded in memory, if any
-	if (instance->keyPair != 0){
-		delete instance->keyPair;
-		instance->keyPair = 0;
+	//Delete the keypair loaded in memory, part by part, if any
+	if (instance->_keyType != ""){
+		instance->_keyType = "";
 	}
-	instance->keyPair = newKeyPair;
+	if (instance->_privateKey != 0){
+		delete instance->_privateKey;
+		instance->_privateKey = 0;
+	}
+	if (instance->_publicKey != 0){
+		delete instance->_publicKey;
+		instance->_publicKey = 0;
+	}
+	instance->_filename = "";
+	//Generating keypairs
 	if (keyType == "ed25519"){
 		unsigned char* privateKey = new unsigned char[crypto_sign_SECRETKEYBYTES];
 		unsigned char* publicKey = new unsigned char[crypto_sign_PUBLICKEYBYTES];
 		crypto_sign_keypair(publicKey, privateKey);
 
-		newKeyPair->insert(make_pair("keyType", "ed25519"));
+		instance->_privateKey = privateKey;
+		instance->_publicKey = publicKey;
+		instance->_keyType = "ed25519";
+
+		/*newKeyPair->insert(make_pair("keyType", "ed25519"));
 		newKeyPair->insert(make_pair("privateKey", strToHex(string((char *)privateKey, crypto_sign_SECRETKEYBYTES))));
 		newKeyPair->insert(make_pair("publicKey", strToHex(string((char *)publicKey, crypto_sign_PUBLICKEYBYTES))));
 		delete privateKey;
-		delete publicKey;
+		delete publicKey;*/
+
 	} else if (keyType == "curve25519"){
 		unsigned char* privateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
 		unsigned char* publicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
 		crypto_box_keypair(publicKey, privateKey);
 
-		newKeyPair->insert(make_pair("keyType", "curve25519"));
+		instance->_privateKey = privateKey;
+		instance->_publicKey = publicKey;
+		instance->_keyType = "curve25519";
+
+		/*newKeyPair->insert(make_pair("keyType", "curve25519"));
 		newKeyPair->insert(make_pair("privateKey", strToHex(string((char *)privateKey, crypto_box_SECRETKEYBYTES))));
 		newKeyPair->insert(make_pair("publicKey", strToHex(string((char *)publicKey, crypto_box_PUBLICKEYBYTES))));
 		delete privateKey;
-		delete publicKey;
+		delete publicKey;*/
 	}
 
 	if (args.Length() >= 2 && !args[1]->IsUndefined()){ //Save keypair to file
 		String::Utf8Value filenameVal(args[1]->ToString());
 		string filename(*filenameVal);
-		saveKeyPair(filename, instance->keyPair);
-		instance->filename_ = filename;
+		saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey);
+		instance->_filename = filename;
 	}
 	if (args.Length() == 3){ //Callback
 		Local<Function> callback = Local<Function>::Cast(args[2]);
@@ -425,9 +437,35 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 	String::Utf8Value filenameVal(args[0]->ToString());
 	string filename(*filenameVal);
 
-	map<string, string>* newKeyPair;
+	if (instance->_keyType == ""){
+		instance->_keyType = "";
+	}
+	if (instance->_privateKey != 0){
+		delete instance->_privateKey;
+		instance->_privateKey = 0;
+	}
+	if (instance ->_publicKey != 0){
+		delete instance->_publicKey;
+		instance->_publicKey = 0;
+	}
+	instance->_filename = "";
+
+	fstream fileReader(filename.c_str(), ios::in);
+	string keyStr;
+	getline(fileReader, keyStr);
+	fileReader.close();
+	if (keyStr[0] == 0x05){ //Curve25519
+		instance->_privateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
+		instance->_publicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
+	} else if (keyStr[0] == 0x06){
+		instance->_privateKey = new unsigned char[crypto_sign_SECRETKEYBYTES];
+		instance->_publicKey = new unsigned char[crypto_sign_PUBLICKEYBYTES];
+	} else {
+		ThrowException(Exception::TypeError(String::New("Invalid key file")));
+	}
+
 	try {
-		newKeyPair = loadKeyPair(filename);
+		loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey);
 	} catch (runtime_error* e){
 		string errMsg = e->what();
 		ThrowException(Exception::TypeError(String::New(errMsg.c_str())));
@@ -437,12 +475,12 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 		return scope.Close(Undefined());
 	}
 
-	if (instance->keyPair != 0){
-		delete instance->keyPair;
-		instance->keyPair = 0;
-	}
-	instance->keyPair = newKeyPair;
-	instance->filename_ = filename;
+	instance->_filename = filename;
+
+	cout << "Finishing load function : " << instance->_keyType << endl;
+	cout << "Public key: " << instance->_publicKey << endl;
+	instance->PPublicKeyInfo();
+	cout << "Pubkey object constructed" << endl;
 
 	if (args.Length() == 1){
 		return scope.Close( instance->PPublicKeyInfo() );
@@ -460,7 +498,7 @@ Handle<Value> KeyRing::Save(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : String filename\nOptional args : Function callback");
 
-	if (instance->keyPair == 0){ //Checking that a key is indeed defined. If not, throw an exception
+	if (instance->_keyType == "" || instance->_publicKey == 0 || instance->_privateKey == 0){ //Checking that a key is indeed defined. If not, throw an exception
 		ThrowException(Exception::TypeError(String::New("No key has been loaded into the keyring")));
 		return scope.Close(Undefined());
 	}
@@ -469,7 +507,7 @@ Handle<Value> KeyRing::Save(const Arguments& args){
 	string filename(*filenameVal);
 
 	try {
-		saveKeyPair(filename, instance->keyPair);
+		saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey);
 	} catch (runtime_error* e){
 		string errMsg = e->what();
 		ThrowException(Exception::TypeError(String::New(errMsg.c_str())));
@@ -493,10 +531,18 @@ Handle<Value> KeyRing::Save(const Arguments& args){
 Handle<Value> KeyRing::Clear(const Arguments& args){
 	HandleScope scope;
 	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
-	if (instance->keyPair != 0){
-		delete instance->keyPair;
-		instance->keyPair = 0;
+	if (instance->_keyType != ""){
+		instance->_keyType = "";
 	}
+	if (instance->_privateKey != 0){
+		delete instance->_privateKey;
+		instance->_privateKey = 0;
+	}
+	if (instance->_publicKey != 0){
+		delete instance->_publicKey;
+		instance->_publicKey = 0;
+	}
+	instance->_filename = "";
 	return scope.Close(Undefined());
 }
 
@@ -546,46 +592,53 @@ bool KeyRing::doesFileExist(string const& filename){
 	return isGood;
 }
 
-void KeyRing::saveKeyPair(string const& filename, map<string, string>* keyPair){
+void KeyRing::saveKeyPair(string const& filename, string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey){
 	fstream fileWriter(filename.c_str(), ios::out | ios::trunc);
-	string params[] = {"keyType", "privateKey", "publicKey"};
+	/*string params[] = {"keyType", "privateKey", "publicKey"};
 	for (int i = 0; i < 3; i++){
 		if (!(keyPair->count(params[i]) > 0)) throw new runtime_error("Missing parameter when saving file : " + params[i]);
-	}
-	string* keyType = &(keyPair->at("keyType"));
-	string* privateKey = &(keyPair->at("privateKey"));
-	string* publicKey = &(keyPair->at("publicKey"));
-	if (*keyType == "curve25519"){
+	}*/
+	if (!((keyType == "ed25519" || keyType == "curve25519") && privateKey != 0 && publicKey != 0)) throw new runtime_error("Invalid parameters");
+ 
+	if (keyType == "curve25519"){
 		//Writing key type
 		fileWriter << (char) 0x05;
 		//Writing public key length
 		fileWriter << (char) (crypto_box_PUBLICKEYBYTES >> 8);
 		fileWriter << (char) (crypto_box_PUBLICKEYBYTES);
 		//Writing public key
-		fileWriter << hexToStr(*publicKey);
+		for (unsigned int i = 0; i < crypto_box_PUBLICKEYBYTES; i++){
+			fileWriter << (char) publicKey[i];
+		}
 		//Writing private key length
 		fileWriter << (char) (crypto_box_SECRETKEYBYTES >> 8);
-		fileWriter << (char) crypto_box_SECRETKEYBYTES;
+		fileWriter << (char) (crypto_box_SECRETKEYBYTES);
 		//Writing the private key
-		fileWriter << hexToStr(*privateKey);
-	} else if (*keyType == "ed25519"){
+		for (unsigned int i = 0; i < crypto_box_SECRETKEYBYTES; i++){
+			fileWriter << (char) privateKey[i];
+		}
+	} else if (keyType == "ed25519"){
 		//Writing key type
 		fileWriter << (char) 0x06;
 		//Writing public key length
 		fileWriter << (char) (crypto_sign_PUBLICKEYBYTES >> 8);
-		fileWriter << (char) crypto_sign_PUBLICKEYBYTES;
+		fileWriter << (char) (crypto_sign_PUBLICKEYBYTES);
 		//Writing the public key
-		fileWriter << hexToStr(*publicKey);
+		for (unsigned int i = 0; i < crypto_sign_PUBLICKEYBYTES; i++){
+			fileWriter << (char) publicKey[i];
+		}
 		//Writing private key length
 		fileWriter << (char) (crypto_sign_SECRETKEYBYTES >> 8);
-		fileWriter << (char) crypto_sign_SECRETKEYBYTES;
+		fileWriter << (char) (crypto_sign_SECRETKEYBYTES);
 		//Writing the private key
-		fileWriter << hexToStr(*privateKey);
-	} else throw new runtime_error("Unknown key type: " + *keyType);
+		for (unsigned int i = 0; i < crypto_sign_SECRETKEYBYTES; i++){
+			fileWriter << (char) privateKey[i];
+		}
+	} else throw new runtime_error("Unknown key type: " + keyType);
 	fileWriter.close();
 }
 
-map<string, string>* KeyRing::loadKeyPair(string const& filename){
+void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char* privateKey, unsigned char* publicKey){
 	fstream fileReader(filename.c_str(), ios::in);
 	string keyStr;
 	getline(fileReader, keyStr);
@@ -593,21 +646,20 @@ map<string, string>* KeyRing::loadKeyPair(string const& filename){
 	stringstream keyStream(keyStr);
 	stringbuf* buffer = keyStream.rdbuf();
 	//Declaring the keyPair map
-	map<string, string>* keyPair;
+	//map<string, string>* keyPair;
 	//Reading the keytype
-	char keyType = buffer->sbumpc();
-	if (!(keyType == 0x05 || keyType == 0x06)){ //Checking that the key type is valid
+	char _keyType = buffer->sbumpc();
+	if (!(_keyType == 0x05 || _keyType == 0x06)){ //Checking that the key type is valid
 		stringstream errMsg;
-		errMsg << "Invalid key type: " << (int) keyType;
+		errMsg << "Invalid key type: " << (int) _keyType;
 		throw new runtime_error(errMsg.str());
 	}
-	keyPair = new map<string, string>();
-	unsigned int publicKeyLength, privateKeyLength;
-	string publicKey = "", privateKey = "";
-	if (keyType == 0x05){ //Curve25519
+	//keyPair = new map<string, string>();
+	unsigned short publicKeyLength, privateKeyLength;
+	if (_keyType == 0x05){ //Curve25519
 		//Getting public key length
-		publicKeyLength = ((unsigned int) buffer->sbumpc()) << 8;
-		publicKeyLength += (unsigned int) buffer->sbumpc();
+		publicKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		publicKeyLength += (unsigned short) buffer->sbumpc();
 		if (publicKeyLength != crypto_box_PUBLICKEYBYTES){ //Checking key length
 			stringstream errMsg;
 			errMsg << "Invalid public key length : " << publicKeyLength;
@@ -615,12 +667,11 @@ map<string, string>* KeyRing::loadKeyPair(string const& filename){
 		}
 		//Getting public key
 		for (unsigned int i = 0; i < publicKeyLength; i++){
-			publicKey += (char) buffer->sbumpc();
+			publicKey[i] = buffer->sbumpc();
 		}
-		publicKey = strToHex(publicKey);
 		//Getting private key length
-		privateKeyLength = ((unsigned int) buffer->sbumpc()) << 8;
-		privateKeyLength += (unsigned int) buffer->sbumpc();
+		privateKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		privateKeyLength += (unsigned short) buffer->sbumpc();
 		if (privateKeyLength != crypto_box_SECRETKEYBYTES){ //Checking key length
 			stringstream errMsg;
 			errMsg << "Invalid private key length : " << privateKeyLength;
@@ -628,17 +679,14 @@ map<string, string>* KeyRing::loadKeyPair(string const& filename){
 		}
 		//Getting private key
 		for (unsigned int i = 0; i < privateKeyLength; i++){
-			privateKey += (char) buffer->sbumpc();
+			privateKey[i] = buffer->sbumpc();
 		}
-		privateKey = strToHex(privateKey);
 		//Building keypair map
-		keyPair->insert(make_pair("keyType", "curve25519"));
-		keyPair->insert(make_pair("publicKey", publicKey));
-		keyPair->insert(make_pair("privateKey", privateKey));
-	} else if (keyType == 0x06){ //Ed25519
+		*keyType = "curve25519";
+	} else if (_keyType == 0x06){ //Ed25519
 		//Getting public key length
-		publicKeyLength = ((unsigned int) buffer->sbumpc()) << 8;
-		publicKeyLength += (unsigned int) buffer->sbumpc();
+		publicKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		publicKeyLength += (unsigned short) buffer->sbumpc();
 		if (publicKeyLength != crypto_sign_PUBLICKEYBYTES){ //Checking key length
 			stringstream errMsg;
 			errMsg << "Invalid public key length : " << publicKeyLength;
@@ -646,12 +694,11 @@ map<string, string>* KeyRing::loadKeyPair(string const& filename){
 		}
 		//Getting public key
 		for (unsigned int i = 0; i < publicKeyLength; i++){
-			publicKey += (char) buffer->sbumpc();
+			publicKey[i] = buffer->sbumpc();
 		}
-		publicKey = strToHex(publicKey);
 		//Getting private key length
-		privateKeyLength = ((unsigned int) buffer->sbumpc()) << 8;
-		privateKeyLength += (unsigned int) buffer->sbumpc();
+		privateKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		privateKeyLength += (unsigned short) buffer->sbumpc();
 		if (privateKeyLength != crypto_sign_SECRETKEYBYTES){ //Cheking key length
 			stringstream errMsg;
 			errMsg << "Invalid private key length : " << privateKeyLength;
@@ -659,13 +706,10 @@ map<string, string>* KeyRing::loadKeyPair(string const& filename){
 		}
 		//Getting private key
 		for (unsigned int i = 0; i < privateKeyLength; i++){
-			privateKey += (char) buffer->sbumpc();
+			privateKey[i] = buffer->sbumpc();
 		}
-		privateKey = strToHex(privateKey);
 		//Building keypair map
-		keyPair->insert(make_pair("keyType", "ed25519"));
-		keyPair->insert(make_pair("publicKey", publicKey));
-		keyPair->insert(make_pair("privateKey", privateKey));
+		*keyType = "ed25519";
 	}
-	return keyPair;
+	cout << "Keypair loaded" << endl;
 }

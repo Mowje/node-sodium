@@ -15,8 +15,11 @@ private:
 	explicit KeyRing(std::string filename = "");
 	~KeyRing();
 	//Internal attributes
-	std::map<std::string, std::string>* keyPair;
-	std::string filename_;
+	//std::map<std::string, std::string>* keyPair;
+	std::string _filename;
+	unsigned char* _privateKey;
+	unsigned char* _publicKey;
+	std::string _keyType;
 	/*
 	* Internal methods
 	*/
@@ -25,8 +28,8 @@ private:
 	//static std::map<std::string, std::string>* edwardsToMontgomery(std::map<std::string, std::string>* edwards);
 
 	//File methods
-	static std::map<std::string, std::string>* loadKeyPair(std::string const& filename);
-	static void saveKeyPair(std::string const& filename, std::map<std::string, std::string>* keyPair);
+	static void loadKeyPair(std::string const& filename, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey);
+	static void saveKeyPair(std::string const& filename, std::string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey);
 	static bool doesFileExist(std::string const& filename);
 
 	//private PubKeyInfo object constructor
