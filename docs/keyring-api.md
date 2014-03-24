@@ -15,9 +15,11 @@ var sodium = require('sodium');
 var keyring = new sodium.api.KeyRing();
 ```
 
-Note that they have the same methods and parameters. But the JS wrapper adds more type testing and dodges a current bug when saving/loading key files.
+Note that they have the same methods and parameters. But the JS wrapper adds more type testing and dodges a current bugs when saving/loading key files are when making some asynchronous calls.
 
 ----------------------
+
+As of now, some async calls, with callbacks, (like signatures) are not working properly on the pure C++ binding.
 
 Don't forget to call the `clear` method once you're done using the keypair loaded in the keyring. Otherwise the keys might stay in memory (ie, memory leak, in between security issues in case the memory is dumped)
 
