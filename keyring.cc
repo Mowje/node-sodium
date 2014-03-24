@@ -99,6 +99,7 @@ void KeyRing::Init(Handle<Object> exports){
 
 /*
 * JS -> C++ data constructor bridge
+* Parameter : String filename [optional]
 */
 Handle<Value> KeyRing::New(const Arguments& args){
 	HandleScope scope;
@@ -344,13 +345,10 @@ Local<Object> KeyRing::PPublicKeyInfo(){
 	if (_keyType == "" || _privateKey == 0 || _publicKey == 0){
 		throw new runtime_error("No loaded key pair");
 	}
-	cout << "Loaded key pair" << endl;
 	//string keyType = keyPair->at("keyType");
 	string publicKey = strToHex(string((char*) _publicKey, ((_keyType == "ed25519") ? crypto_sign_PUBLICKEYBYTES : crypto_box_PUBLICKEYBYTES)));
-	cout << "Public key string constructed" << endl;
 	pubKeyObj->Set(String::NewSymbol("keyType"), String::New(_keyType.c_str()));
 	pubKeyObj->Set(String::NewSymbol("publicKey"), String::New(publicKey.c_str()));
-	cout << "pubKeyObject constructed" << endl;
 	return pubKeyObj;
 }
 
@@ -390,12 +388,6 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		instance->_publicKey = publicKey;
 		instance->_keyType = "ed25519";
 
-		/*newKeyPair->insert(make_pair("keyType", "ed25519"));
-		newKeyPair->insert(make_pair("privateKey", strToHex(string((char *)privateKey, crypto_sign_SECRETKEYBYTES))));
-		newKeyPair->insert(make_pair("publicKey", strToHex(string((char *)publicKey, crypto_sign_PUBLICKEYBYTES))));
-		delete privateKey;
-		delete publicKey;*/
-
 	} else if (keyType == "curve25519"){
 		unsigned char* privateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
 		unsigned char* publicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
@@ -404,12 +396,6 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		instance->_privateKey = privateKey;
 		instance->_publicKey = publicKey;
 		instance->_keyType = "curve25519";
-
-		/*newKeyPair->insert(make_pair("keyType", "curve25519"));
-		newKeyPair->insert(make_pair("privateKey", strToHex(string((char *)privateKey, crypto_box_SECRETKEYBYTES))));
-		newKeyPair->insert(make_pair("publicKey", strToHex(string((char *)publicKey, crypto_box_PUBLICKEYBYTES))));
-		delete privateKey;
-		delete publicKey;*/
 	}
 
 	if (args.Length() >= 2 && !args[1]->IsUndefined()){ //Save keypair to file
@@ -477,10 +463,7 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 
 	instance->_filename = filename;
 
-	cout << "Finishing load function : " << instance->_keyType << endl;
-	cout << "Public key: " << instance->_publicKey << endl;
 	instance->PPublicKeyInfo();
-	cout << "Pubkey object constructed" << endl;
 
 	if (args.Length() == 1){
 		return scope.Close( instance->PPublicKeyInfo() );
@@ -602,37 +585,37 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
  
 	if (keyType == "curve25519"){
 		//Writing key type
-		fileWriter << (char) 0x05;
+		fileWriter << (unsigned char) 0x05;
 		//Writing public key length
-		fileWriter << (char) (crypto_box_PUBLICKEYBYTES >> 8);
-		fileWriter << (char) (crypto_box_PUBLICKEYBYTES);
+		fileWriter << (unsigned char) (crypto_box_PUBLICKEYBYTES >> 8);
+		fileWriter << (unsigned char) (crypto_box_PUBLICKEYBYTES);
 		//Writing public key
 		for (unsigned int i = 0; i < crypto_box_PUBLICKEYBYTES; i++){
-			fileWriter << (char) publicKey[i];
+			fileWriter << (unsigned char) publicKey[i];
 		}
 		//Writing private key length
-		fileWriter << (char) (crypto_box_SECRETKEYBYTES >> 8);
-		fileWriter << (char) (crypto_box_SECRETKEYBYTES);
+		fileWriter << (unsigned char) (crypto_box_SECRETKEYBYTES >> 8);
+		fileWriter << (unsigned char) (crypto_box_SECRETKEYBYTES);
 		//Writing the private key
 		for (unsigned int i = 0; i < crypto_box_SECRETKEYBYTES; i++){
-			fileWriter << (char) privateKey[i];
+			fileWriter << (unsigned char) privateKey[i];
 		}
 	} else if (keyType == "ed25519"){
 		//Writing key type
-		fileWriter << (char) 0x06;
+		fileWriter << (unsigned char) 0x06;
 		//Writing public key length
-		fileWriter << (char) (crypto_sign_PUBLICKEYBYTES >> 8);
-		fileWriter << (char) (crypto_sign_PUBLICKEYBYTES);
+		fileWriter << (unsigned char) (crypto_sign_PUBLICKEYBYTES >> 8);
+		fileWriter << (unsigned char) (crypto_sign_PUBLICKEYBYTES);
 		//Writing the public key
 		for (unsigned int i = 0; i < crypto_sign_PUBLICKEYBYTES; i++){
-			fileWriter << (char) publicKey[i];
+			fileWriter << (unsigned char) publicKey[i];
 		}
 		//Writing private key length
-		fileWriter << (char) (crypto_sign_SECRETKEYBYTES >> 8);
-		fileWriter << (char) (crypto_sign_SECRETKEYBYTES);
+		fileWriter << (unsigned char) (crypto_sign_SECRETKEYBYTES >> 8);
+		fileWriter << (unsigned char) (crypto_sign_SECRETKEYBYTES);
 		//Writing the private key
 		for (unsigned int i = 0; i < crypto_sign_SECRETKEYBYTES; i++){
-			fileWriter << (char) privateKey[i];
+			fileWriter << (unsigned char) privateKey[i];
 		}
 	} else throw new runtime_error("Unknown key type: " + keyType);
 	fileWriter.close();
@@ -711,5 +694,4 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		//Building keypair map
 		*keyType = "ed25519";
 	}
-	cout << "Keypair loaded" << endl;
 }

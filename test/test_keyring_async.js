@@ -1,6 +1,6 @@
 var assert = require('assert');
 var Buffer = require('buffer').Buffer;
-var sodium = require('../build/Release/sodium');
+var sodium = require('../lib/sodium');
 
 var message1 = 'Message 1', message2 = 'Message 2';
 
@@ -45,8 +45,8 @@ var generateEd25519KeyPairs = function(callback){
 var testEd25519Signatures = function(callback){
 	keyring1.sign(new Buffer(message1), function(signature1){
 		keyring2.sign(new Buffer(message2), function(signature2){
-			var signedMessage1 = sodium.crypto_sign_open(signature1, new Buffer(pubKey1.publicKey, 'hex'));
-			var signedMessage2 = sodium.crypto_sign_open(signature2, new Buffer(pubKey2.publicKey, 'hex'));
+			var signedMessage1 = sodium.api.crypto_sign_open(signature1, new Buffer(pubKey1.publicKey, 'hex'));
+			var signedMessage2 = sodium.api.crypto_sign_open(signature2, new Buffer(pubKey2.publicKey, 'hex'));
 			assert.notEqual(typeof signedMessage1, 'undefined', 'The signature of the first message is invalid');
 			assert.notEqual(typeof signedMessage2, 'undefined', 'The signature of the second message is invalid');
 			assert.equal(signedMessage1.toString('utf8'), message1, 'The signed message 1 isn\'t the same as the original');

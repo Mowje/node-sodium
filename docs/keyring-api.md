@@ -5,10 +5,17 @@ To initialize a `KeyRing` object:
 
 ```js
 var sodium = require('sodium');
+var keyring = new sodium.KeyRing();
+```
+
+**NOTE:** This gives you access to a wrapped version of the `KeyRing` class, that has better type testing. You can however directly access the C++ version by using instead :
+
+```js
+var sodium = require('sodium');
 var keyring = new sodium.api.KeyRing();
 ```
 
-**NOTE:**
+Note that they have the same methods and parameters. But the JS wrapper adds more type testing and dodges a current bug when saving/loading key files.
 
 ----------------------
 
@@ -23,6 +30,8 @@ Additionally :
 
 ## Methods :
 
+* `KeyRing([String filename])` : Constructor function
+	* String filename : Optional. Path to a key file to be loaded into the KeyRing upon construction
 * `KeyRing.createKeyPair(String keyType, [String filename], [Function callback])`
 	* String keyType : 'curve25519' or 'ed25519'. Other values will raise an exception
 	* String filename : path where you want to save the key once it's generated. Optional
