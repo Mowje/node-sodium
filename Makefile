@@ -40,6 +40,9 @@ git-getsodium:
 	git init
 	git submodule add https://github.com/jedisct1/libsodium.git
 	git submodule update
+	cd libsodium
+	git reset HEAD 0.4.5
+	git checkout -- .
 
 clean:
 	-rm -fr lib-cov
