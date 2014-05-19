@@ -11,6 +11,7 @@
 #include <utility>
 #include <iomanip>
 #include <algorithm>
+#include <cstring>
 
 #include <node.h>
 #include <node_buffer.h>
@@ -281,7 +282,7 @@ Handle<Value> KeyRing::Sign(const Arguments& args){
 	//BUILD_BUFFER(string((char*) signature, messageLength + crypto_sign_BYTES).c_str());
 
 	if (args.Length() == 1){
-		return scope.Close(signatureBuf->handle_); 
+		return scope.Close(signatureBuf->handle_);
 	} else {
 		BUILD_BUFFER(string((char*) signature, messageLength + crypto_sign_BYTES).c_str());
 		Local<Function> callback = Local<Function>::Cast(args[1]);
@@ -551,18 +552,18 @@ string KeyRing::hexToStr(string const& s){
 	static const char* const charset = "0123456789abcdef";
     size_t length = s.length();
     if (length & 1) throw invalid_argument("Odd length");
-    
+
     string output;
     output.reserve(length / 2);
     for (size_t i = 0; i < length; i+= 2){
         char a = s[i];
         const char* p = lower_bound(charset, charset + 16, a);
         if (*p != a) throw invalid_argument("Invalid hex char");
-        
+
         char b = s[i + 1];
         const char* q = lower_bound(charset, charset + 16, b);
         if (*q != b) throw invalid_argument("Invalid hex char");
-        
+
         output.push_back(((p - charset) << 4) | (q - charset));
     }
     return output;
@@ -582,7 +583,7 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 		if (!(keyPair->count(params[i]) > 0)) throw new runtime_error("Missing parameter when saving file : " + params[i]);
 	}*/
 	if (!((keyType == "ed25519" || keyType == "curve25519") && privateKey != 0 && publicKey != 0)) throw new runtime_error("Invalid parameters");
- 
+
 	if (keyType == "curve25519"){
 		//Writing key type
 		fileWriter << (unsigned char) 0x05;
@@ -658,7 +659,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		if (privateKeyLength != crypto_box_SECRETKEYBYTES){ //Checking key length
 			stringstream errMsg;
 			errMsg << "Invalid private key length : " << privateKeyLength;
-			throw new runtime_error(errMsg.str()); 
+			throw new runtime_error(errMsg.str());
 		}
 		//Getting private key
 		for (unsigned int i = 0; i < privateKeyLength; i++){
