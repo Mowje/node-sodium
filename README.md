@@ -108,6 +108,14 @@ You'll need to install libtool and automake in your platform. For Mac OSX you ca
 
 Then repeat the steps from `./autogen.sh`
 
+## `cannot open shared object file` error
+
+This error might happen on your first call to node-sodium (whether it be from test scripts or in-app). To fix it, setting environment variables as written below should do the trick (as suggested [here](https://github.com/paixaop/node-sodium/issues/4))
+
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/node_modules/sodium/libsodium/src/libsodium/.libs/
+    export LD_RUN_PATH=$LD_RUN_PATH:$(pwd)/node_modules/sodium/libsodium/src/libsodium/.libs/
+
+This error has reportedly happened on different Linux distros after a successful compilation
 
 # Code Samples
 Please check the fully documented code samples in `test/test_sodium.js`.
