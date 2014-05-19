@@ -14,12 +14,12 @@ Check [`docs/ported-functions.md`](https://github.com/paixaop/node-sodium/tree/m
 
 Just a quick example that uses the same public/secret key pair to encrypt and then decrypt the message.
 
-    var sodium = require('sodium');        
+    var sodium = require('sodium');
     var box = new sodium.Box();     // random key pair, and nonce generated automatically
-    
+
     var cipherText = box.encrypt("This is a secret message", "utf8");
     var plainText = box.decrypt(cipherText);
-    
+
 
 # Use the `KeyRing`
 
@@ -27,21 +27,21 @@ Because javascript uses garbage collecting, it could be considered as unsafe to 
 
 Hence we build `sodium.KeyRing` that will generate, hold the private key and do the cryptographic operations that require it. It also load/save keypairs into files on the disk. We can extract the public key from the `KeyRing`, but not the private key.
 
-Check [`docs/keyring-api.md`](https://github.com/Tashweesh/node-sodium/tree/master/docs/keyring-api.md) for the list of methods of `KeyRing` and more details on how to use this class.
-    
+Check [`docs/keyring-api.md`](https://github.com/Mowje/node-sodium/tree/master/docs/keyring-api.md) for the list of methods of `KeyRing` and more details on how to use this class.
+
 # Low Level API
 A low level API is provided for advanced users. The functions available through the low level API have the exact same names as in lib sodium, and are available via the `sodium.api` object. Here is one example of how to use some of the low level API functions to encrypt/decrypt a message:
 
     var sodium = require('sodium').api;
-    
+
     // Generate keys
     var sender = sodium.crypto_box_keypair();
     var receiver = sodium.crypto_box_keypair();
-    
+
 	// Generate random nonce
     var nonce = new Buffer(sodium.crypto_box_NONCEBYTES);
 	sodium.randombytes_buf(nonce);
-    
+
     // Encrypt
     var plainText = new Buffer('this is a message');
     var cipherMsg = sodium.crypto_box(plainText, nonce, receiver.publicKey, sender.secretKey);
@@ -54,11 +54,11 @@ A low level API is provided for advanced users. The functions available through 
     if( plainBuffer.toString() == plainText) {
         console.log("Message decrypted correctly");
     }
-    
+
 As you can see the high level API implementation is easier to use, but the low level API will fill just right for those with experience with the C version of lib sodium. It also allows you to bypass any bugs in the high level APIs.
 
 You can find this code sample in `examples\low-level-api.js`.
-    
+
 # Documentation
 Please read the work in progress documentation found under [`docs/`](https://github.com/paixaop/node-sodium/tree/master/docs).
 
@@ -66,22 +66,22 @@ You shoudld also review the unit tests as most of the high level API is "documen
 Don't forget to check out the examples as well.
 
 # Lib Sodium Documentation
-Lib Sodium is somewhat documented [here](http://mob5.host.cs.st-andrews.ac.uk/html/). Node-Sodium follows the same structure and I will keep documenting it as fast as possible. 
+Lib Sodium is somewhat documented [here](http://mob5.host.cs.st-andrews.ac.uk/html/). Node-Sodium follows the same structure and I will keep documenting it as fast as possible.
 
 # Install
 
-Tested on Mac. May work on Linux without any modification.
+Tested on Mac and Linux. However be sure to have installed automake and libtool (libsodium dependencies) before installing this node module
 
-    npm install git+ssh://git@github.com:Tashweesh/node-sodium.git
+    npm install git+ssh://git@github.com:Mowje/node-sodium.git
 
 Or
 
-    npm install git+https://github.com:Tashweesh/node-sodium.git
+    npm install git+https://github.com:Mowje/node-sodium.git
 
 node-sodium depends on lib sodium, so if lib sodium does not compile on your platform chances are that process will fail.
 
 # Manual Install
-Clone this git repository, and change to the local directory where you ran git clone to, 
+Clone this git repository, and change to the local directory where you ran git clone to,
 
     npm install
 
@@ -91,23 +91,23 @@ This will pull lib sodium from github and compile it by running the following co
     ./autogen
     ./configure
     make
-    
+
 Followed by
 
     cd ..
     npm build .
     npm install
-    
+
 If you get an `autogen.sh` error similar to this
-    
+
     ./autogen.sh: line 13: libtoolize: command not found
-    
+
 You'll need to install libtool and automake in your platform. For Mac OSX you can use [Homebrew](http://brew.sh)
 
-    brew install libtool automake    
+    brew install libtool automake
 
 Then repeat the steps from `./autogen.sh`
-    
+
 
 # Code Samples
 Please check the fully documented code samples in `test/test_sodium.js`.
@@ -126,11 +126,8 @@ You may need to run it with `sudo` is only root user has access to Node.js globa
 You need to have mocha test suite installed globally then you can run the node-sodium unit tests by
 
     make test
-    
+
 # Coverage Reports
 You need to have mocha test suite installed globally then you can run the node-sodium unit tests by
-	
+
     make test-cov
-	
-
-
