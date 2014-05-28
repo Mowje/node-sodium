@@ -41,6 +41,8 @@ Additionally :
 	* Returns the `PublicKeyInfo` object (if no callback has been given)
 * `KeyRing.publicKeyInfo([Function callback])`
 	Returns an object (or passes it to the callback, if defined) containing the `keyType` and the `publicKey` (as hex-encoded string)
+* `KeyRing.clear()`
+	Clears the loaded key from memory
 * `KeyRing.encrypt(Buffer message, Buffer publicKey, Buffer nonce, [Function callback])`
 	* Buffer message : the message to encrypt
 	* Buffer publicKey : the receiver's public key
