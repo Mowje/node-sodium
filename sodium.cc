@@ -31,7 +31,8 @@ using namespace v8;
 
 #define NEW_BUFFER_AND_PTR(name, size) \
     Buffer* name = Buffer::New(size); \
-    unsigned char* name ## _ptr = (unsigned char*)Buffer::Data(name)
+    Local<Object> name ## _handle = Local<Object>::New(name->handle_); \
+    unsigned char* name ## _ptr = (unsigned char*)Buffer::Data(name ## _handle)
 
 #define GET_ARG_AS(i, NAME, TYPE) \
     ARG_IS_BUFFER(i,#NAME); \
@@ -106,7 +107,7 @@ Handle<Value> bind_memzero(const Arguments& args) {
     return scope.Close(Null());
 }
 
-/** 
+/**
  * int sodium_memcmp(const void * const b1_, const void * const b2_, size_t size);
  */
 Handle<Value> bind_memcmp(const Arguments& args) {
@@ -129,7 +130,7 @@ Handle<Value> bind_memcmp(const Arguments& args) {
     if( s < size ) {
         size = s;
     }
-    
+
     return scope.Close(Integer::New(sodium_memcmp(buffer_1, buffer_2, size)));
 }
 
@@ -181,7 +182,7 @@ Handle<Value> bind_randombytes_uniform(const Arguments& args) {
     uint32_t upper_bound;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument size must be a positive number");
-    
+
     if (args[0]->IsUint32()) {
         upper_bound = args[0]->Int32Value();
     } else {
@@ -197,10 +198,10 @@ Handle<Value> bind_crypto_verify_16(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments must be two buffers");
-    
+
     GET_ARG_AS_UCHAR_LEN(0,string1, crypto_verify_16_BYTES);
     GET_ARG_AS_UCHAR_LEN(1,string2, crypto_verify_16_BYTES);
-    
+
     return scope.Close(Integer::New(crypto_verify_16(string1, string2)));
 }
 
@@ -209,7 +210,7 @@ Handle<Value> bind_crypto_verify_32(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments must be two buffers");
-    
+
     GET_ARG_AS_UCHAR_LEN(0,string1, crypto_verify_32_BYTES);
     GET_ARG_AS_UCHAR_LEN(1,string2, crypto_verify_32_BYTES);
 
@@ -242,12 +243,12 @@ Handle<Value> bind_crypto_shorthash(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
-    
+
     GET_ARG_AS_UCHAR(0,message);
     GET_ARG_AS_UCHAR_LEN(1, key, crypto_shorthash_KEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(hash, crypto_shorthash_BYTES);
-    
+
     if( crypto_shorthash(hash_ptr, message, message_size, key) == 0 ) {
         return scope.Close(hash->handle_);
     }
@@ -264,11 +265,11 @@ Handle<Value> bind_crypto_hash(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
-    
+
     GET_ARG_AS_UCHAR(0,msg);
-    
+
     NEW_BUFFER_AND_PTR(hash, crypto_hash_BYTES);
-    
+
     if( crypto_hash(hash_ptr, msg, msg_size) == 0 ) {
         return scope.Close(hash->handle_);
     }
@@ -284,7 +285,7 @@ Handle<Value> bind_crypto_hash(const Arguments& args) {
 Handle<Value> bind_crypto_hash_sha256(const Arguments& args) {
     HandleScope scope;
 
-    NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");    
+    NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
     GET_ARG_AS_UCHAR(0, msg);
     NEW_BUFFER_AND_PTR(hash, 32);
 
@@ -304,9 +305,9 @@ Handle<Value> bind_crypto_hash_sha512(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
-    
+
     GET_ARG_AS_UCHAR(0, msg);
-    
+
     NEW_BUFFER_AND_PTR(hash, 64);
 
     if( crypto_hash_sha512(hash_ptr, msg, msg_size) == 0 ) {
@@ -333,12 +334,12 @@ Handle<Value> bind_crypto_auth(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments message, and key must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, msg);
     GET_ARG_AS_UCHAR_LEN(1, key, crypto_auth_KEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(token, crypto_auth_BYTES);
-    
+
     if( crypto_auth(token_ptr, msg, msg_size, key) == 0 ) {
         return scope.Close(token->handle_);
     }
@@ -362,7 +363,7 @@ Handle<Value> bind_crypto_auth_verify(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments token, message, and key must be buffers");
-    
+
     GET_ARG_AS_UCHAR_LEN(0, token, crypto_auth_BYTES);
     GET_ARG_AS_UCHAR(1, message);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_auth_KEYBYTES);
@@ -385,12 +386,12 @@ Handle<Value> bind_crypto_auth_verify(const Arguments& args) {
  */
 Handle<Value> bind_crypto_onetimeauth(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(2,"arguments message, and key must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, message);
     GET_ARG_AS_UCHAR_LEN(1, key, crypto_onetimeauth_KEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(token, crypto_onetimeauth_BYTES);
 
     if( crypto_onetimeauth(token_ptr, message, message_size, key) == 0 ) {
@@ -416,7 +417,7 @@ Handle<Value> bind_crypto_onetimeauth_verify(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments token, message, and key must be buffers");
-    
+
     GET_ARG_AS_UCHAR_LEN(0, token, crypto_onetimeauth_BYTES);
     GET_ARG_AS_UCHAR(1, message);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_onetimeauth_KEYBYTES);
@@ -444,16 +445,16 @@ Handle<Value> bind_crypto_onetimeauth_verify(const Arguments& args) {
  */
 Handle<Value> bind_crypto_stream(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(3,"argument length must be a positive number, arguments nonce, and key must be buffers");
-    
+
     if (!args[0]->IsUint32())
         return V8Exception("argument length must be positive number");
-    
+
     unsigned long long slen = args[0]->ToUint32()->Value();
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_stream_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_stream_KEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(stream, slen);
 
     if( crypto_stream(stream_ptr, slen, nonce, key) == 0) {
@@ -487,13 +488,13 @@ Handle<Value> bind_crypto_stream(const Arguments& args) {
  */
 Handle<Value> bind_crypto_stream_xor(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce, and key must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, message);
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_stream_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_stream_KEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(ctxt, message_size);
 
     if( crypto_stream_xor(ctxt_ptr, message, message_size, nonce, key) == 0) {
@@ -531,13 +532,13 @@ Handle<Value> bind_crypto_stream_xor(const Arguments& args) {
  */
 Handle<Value> bind_crypto_secretbox(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce, and key must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, message);
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_secretbox_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_secretbox_KEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(pmb, message_size + crypto_secretbox_ZEROBYTES);
 
     // Fill the first crypto_secretbox_ZEROBYTES with 0
@@ -549,7 +550,7 @@ Handle<Value> bind_crypto_secretbox(const Arguments& args) {
     //Copy the message to the new buffer
     memcpy((void*) (pmb_ptr + crypto_secretbox_ZEROBYTES), (void *) message, message_size);
     message_size += crypto_secretbox_ZEROBYTES;
-    
+
     NEW_BUFFER_AND_PTR(ctxt, message_size);
 
     if( crypto_secretbox(ctxt_ptr, pmb_ptr, message_size, nonce, key) == 0) {
@@ -591,13 +592,13 @@ Handle<Value> bind_crypto_secretbox(const Arguments& args) {
  */
 Handle<Value> bind_crypto_secretbox_open(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(3,"arguments cipherText, nonce, and key must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, cipher_text);
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_secretbox_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_secretbox_KEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(message, cipher_text_size);
 
     // API requires that the first crypto_secretbox_ZEROBYTES of msg be 0 so lets check
@@ -656,10 +657,10 @@ Handle<Value> bind_crypto_sign(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments message, and secretKey must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, message);
     GET_ARG_AS_UCHAR_LEN(1, secretKey, crypto_sign_SECRETKEYBYTES);
-    
+
     NEW_BUFFER_AND_PTR(sig, message_size + crypto_sign_BYTES);
 
     unsigned long long slen = 0;
@@ -693,7 +694,7 @@ Handle<Value> bind_crypto_sign(const Arguments& args) {
  */
 Handle<Value> bind_crypto_sign_keypair(const Arguments& args) {
     HandleScope scope;
-    
+
     NEW_BUFFER_AND_PTR(vk, crypto_sign_PUBLICKEYBYTES);
     NEW_BUFFER_AND_PTR(sk, crypto_sign_SECRETKEYBYTES);
 
@@ -735,15 +736,15 @@ Handle<Value> bind_crypto_sign_keypair(const Arguments& args) {
  */
 Handle<Value> bind_crypto_sign_open(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(2,"arguments signedMessage and verificationKey must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, signedMessage);
     GET_ARG_AS_UCHAR_LEN(1, publicKey, crypto_sign_PUBLICKEYBYTES);
 
     unsigned long long mlen = 0;
     NEW_BUFFER_AND_PTR(msg, signedMessage_size);
-    
+
     if( crypto_sign_open(msg_ptr, &mlen, signedMessage, signedMessage_size, publicKey) == 0) {
         NEW_BUFFER_AND_PTR(m, mlen);
         memcpy(m_ptr, msg_ptr, mlen);
@@ -783,9 +784,9 @@ Handle<Value> bind_crypto_sign_open(const Arguments& args) {
  */
 Handle<Value> bind_crypto_box(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(4,"arguments message, nonce, publicKey and secretKey must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, message);
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_box_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, publicKey, crypto_box_PUBLICKEYBYTES);
@@ -834,10 +835,10 @@ Handle<Value> bind_crypto_box(const Arguments& args) {
  */
 Handle<Value> bind_crypto_box_keypair(const Arguments& args) {
     HandleScope scope;
-    
+
     NEW_BUFFER_AND_PTR(pk, crypto_box_PUBLICKEYBYTES);
     NEW_BUFFER_AND_PTR(sk, crypto_box_SECRETKEYBYTES);
-    
+
     if( crypto_box_keypair(pk_ptr, sk_ptr) == 0) {
         Local<Object> result = Object::New();
         result->Set(String::NewSymbol("publicKey"), pk->handle_);
@@ -879,21 +880,21 @@ Handle<Value> bind_crypto_box_keypair(const Arguments& args) {
  */
 Handle<Value> bind_crypto_box_open(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(4,"arguments cipherText, nonce, publicKey and secretKey must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, cipherText);
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_box_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, publicKey, crypto_box_PUBLICKEYBYTES);
-    GET_ARG_AS_UCHAR_LEN(3, secretKey, crypto_box_SECRETKEYBYTES);    
-    
+    GET_ARG_AS_UCHAR_LEN(3, secretKey, crypto_box_SECRETKEYBYTES);
+
     // API requires that the first crypto_box_BOXZEROBYTES of msg be 0 so lets check
     if( cipherText_size < crypto_box_BOXZEROBYTES ) {
         std::ostringstream oss;
         oss << "argument cipherText must have a length of at least " << crypto_box_BOXZEROBYTES << " bytes";
         return V8Exception(oss.str().c_str());
     }
-    
+
     unsigned int i;
     for(i=0; i < crypto_box_BOXZEROBYTES; i++) {
         if( cipherText[i] ) break;
@@ -903,9 +904,9 @@ Handle<Value> bind_crypto_box_open(const Arguments& args) {
         oss << "the first " << crypto_box_BOXZEROBYTES << " bytes of argument cipherText must be 0";
         return V8Exception(oss.str().c_str());
     }
-    
+
     NEW_BUFFER_AND_PTR(msg, cipherText_size);
-    
+
     if( crypto_box_open(msg_ptr, cipherText, cipherText_size, nonce, publicKey, secretKey) == 0) {
 
         // Remove the padding at the beginning of the message
@@ -937,7 +938,7 @@ Handle<Value> bind_crypto_box_beforenm(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments publicKey, and secretKey must be buffers");
-    
+
     GET_ARG_AS_UCHAR_LEN(0, publicKey, crypto_box_PUBLICKEYBYTES);
     GET_ARG_AS_UCHAR_LEN(1, secretKey, crypto_box_SECRETKEYBYTES);
 
@@ -969,16 +970,16 @@ Handle<Value> bind_crypto_box_beforenm(const Arguments& args) {
  */
 Handle<Value> bind_crypto_box_afternm(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce and k must be buffers");
-    
+
     GET_ARG_AS_UCHAR(0, message);
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_box_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, k, crypto_box_BEFORENMBYTES);
 
     // Pad the message with crypto_box_ZEROBYTES zeros
     NEW_BUFFER_AND_PTR(msg, message_size + crypto_box_ZEROBYTES);
-    
+
     unsigned int i;
     for(i=0; i < crypto_box_ZEROBYTES; i++) {
        msg_ptr[i] = 0U;
@@ -988,7 +989,7 @@ Handle<Value> bind_crypto_box_afternm(const Arguments& args) {
     message_size += crypto_box_ZEROBYTES;
 
     NEW_BUFFER_AND_PTR(ctxt, message_size);
-    
+
     if( crypto_box_afternm(ctxt_ptr, msg_ptr, message_size, nonce, k) == 0) {
         return scope.Close(ctxt->handle_);
     }
@@ -1026,7 +1027,7 @@ Handle<Value> bind_crypto_box_open_afternm(const Arguments& args) {
     HandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments cipherText, nonce, k");
-    
+
     GET_ARG_AS_UCHAR(0, cipherText);
     GET_ARG_AS_UCHAR_LEN(0, nonce, crypto_box_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(1, k, crypto_box_BEFORENMBYTES);
@@ -1049,7 +1050,7 @@ Handle<Value> bind_crypto_box_open_afternm(const Arguments& args) {
     }
 
     NEW_BUFFER_AND_PTR(msg, cipherText_size);
-    
+
     if( crypto_box_open_afternm(msg_ptr, cipherText, cipherText_size, nonce, k) == 0) {
 
         // Remove the padding at the beginning of the message
@@ -1066,11 +1067,11 @@ Handle<Value> bind_crypto_box_open_afternm(const Arguments& args) {
  */
 Handle<Value> bind_crypto_scalarmult_base(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(1,"argument must be a buffer");
-    
+
     GET_ARG_AS_UCHAR_LEN(0, n, crypto_scalarmult_SCALARBYTES);
-    NEW_BUFFER_AND_PTR(q, crypto_scalarmult_BYTES);    
+    NEW_BUFFER_AND_PTR(q, crypto_scalarmult_BYTES);
 
     if( crypto_scalarmult_base(q_ptr, n) == 0) {
         return scope.Close(q->handle_);
@@ -1085,13 +1086,13 @@ Handle<Value> bind_crypto_scalarmult_base(const Arguments& args) {
  */
 Handle<Value> bind_crypto_scalarmult(const Arguments& args) {
     HandleScope scope;
-    
+
     NUMBER_OF_MANDATORY_ARGS(2,"arguments must be buffers");
-    
+
     GET_ARG_AS_UCHAR_LEN(0, n, crypto_scalarmult_SCALARBYTES);
     GET_ARG_AS_UCHAR_LEN(1, p, crypto_scalarmult_BYTES);
-    
-    NEW_BUFFER_AND_PTR(q, crypto_scalarmult_BYTES);    
+
+    NEW_BUFFER_AND_PTR(q, crypto_scalarmult_BYTES);
 
     if( crypto_scalarmult(q_ptr, n, p) == 0) {
         return scope.Close(q->handle_);
@@ -1118,7 +1119,7 @@ void RegisterModule(Handle<Object> target) {
 
     // Register version functions
     NEW_METHOD(sodium_version_string);
-    
+
     //NEW_METHOD(version);
     NEW_METHOD(sodium_library_version_minor);
     NEW_METHOD(sodium_library_version_major);
@@ -1190,7 +1191,7 @@ void RegisterModule(Handle<Object> target) {
     NEW_INT_PROP(crypto_sign_BYTES);
     NEW_INT_PROP(crypto_sign_PUBLICKEYBYTES);
     NEW_INT_PROP(crypto_sign_SECRETKEYBYTES);
-    
+
     // Box
     NEW_METHOD(crypto_box);
     NEW_METHOD(crypto_box_keypair);
@@ -1210,14 +1211,14 @@ void RegisterModule(Handle<Object> target) {
     NEW_INT_PROP(crypto_shorthash_BYTES);
     NEW_INT_PROP(crypto_shorthash_KEYBYTES);
     NEW_STRING_PROP(crypto_shorthash_PRIMITIVE);
-    
+
     // Scalar Mult
     NEW_METHOD(crypto_scalarmult);
     NEW_METHOD(crypto_scalarmult_base);
     NEW_INT_PROP(crypto_scalarmult_SCALARBYTES);
     NEW_INT_PROP(crypto_scalarmult_BYTES);
     NEW_STRING_PROP(crypto_scalarmult_PRIMITIVE);
-    
+
 }
 
 NODE_MODULE(sodium, RegisterModule);
