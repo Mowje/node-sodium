@@ -1144,7 +1144,7 @@ void RegisterModule(Handle<Object> target) {
     NEW_METHOD(crypto_hash_sha512);
     NEW_METHOD(crypto_hash_sha256);
     NEW_INT_PROP(crypto_hash_BYTES);
-    NEW_INT_PROP(crypto_hash_BLOCKBYTES);
+    //NEW_INT_PROP(crypto_hash_BLOCKBYTES); //Seems that this constant isn't available anymore
     NEW_STRING_PROP(crypto_hash_PRIMITIVE);
 
     // Auth

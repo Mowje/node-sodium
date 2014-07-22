@@ -53,10 +53,10 @@ clean:
 	-rm -fr coverage.html
 
 sodium:
-	cd libsodium; \
-	./autogen.sh; \
-	./configure;  \
-	make	
+	cd libsodium && \
+	./autogen.sh && \
+    ./configure && \
+	make && make check
 	node-gyp rebuild
 
 .PHONY: test-cov site docs test docclean
