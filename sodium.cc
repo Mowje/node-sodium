@@ -10,6 +10,8 @@
 
 #include <cstdlib>
 #include <ctime>
+#include <cmath>
+//#include <cstdint> //Is it needed?
 #include <cstring>
 #include <string>
 #include <sstream>
@@ -316,6 +318,84 @@ Handle<Value> bind_crypto_hash_sha512(const Arguments& args) {
     return scope.Close(Null());
 }
 
+/**
+* int crypto_pwhash_scryptsalsa208sha256(unsigned char * const out,
+*                                      unsigned long long outlen,
+*                                      const char * const passwd,
+*                                      unsigned long long passwdlen,
+*                                      const unsigned char * const salt,
+*                                      unsigned long long opslimit,
+*                                      size_t memlimit);
+*/
+Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256(const Arguments& args){
+    HandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(3, "arguments password and salt must be buffers; keyLength, opslimit and memlimit must be integers");
+
+    GET_ARG_AS_UCHAR(0, password);
+    GET_ARG_AS_UCHAR_LEN(1, salt, crypto_pwhash_scryptsalsa208sha256_SALTBYTES);
+
+    unsigned int keyLength = 32;
+    unsigned long long opslimit = crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE;
+    size_t memlimit = crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE;
+
+    //Get the key length parameter
+    if (args.Length() >= 3 && !(args[2]->IsUndefined() || args[2]->IsNull())){
+        if (!args[2]->IsNumber()){
+            ThrowException(Exception::TypeError(String::New("when defined, keyLength must be a positive integer")));
+            return scope.Close(Undefined());
+        } else {
+            int keyLengthArg = args[2]->Int32Value();
+            //Check parameter value
+            if (keyLengthArg <= 0){
+                ThrowException(Exception::RangeError(String::New("when defined, keyLength must be a positive integer")));
+                return scope.Close(Undefined());
+            }
+            keyLength = (unsigned int) keyLengthArg;
+        }
+    }
+
+    //Get the opslimit parameter
+    if (args.Length() >= 4 && !(args[3]->IsUndefined() || args[3]->IsNull())){
+        if (!args[3]->IsNumber()){
+            ThrowException(Exception::TypeError(String::New("when defined, opslimit must be a positive integer")));
+            return scope.Close(Undefined());
+        } else {
+            long long opslimitArg = args[3]->IntegerValue();
+            //Check parameter value
+            if (opslimitArg <= 0){
+                ThrowException(Exception::RangeError(String::New("when defined, opslimit must be a positive integer")));
+                return scope.Close(Undefined());
+            }
+            opslimit = opslimitArg;
+        }
+    }
+
+    //Get the memlimit parameter
+    if (args.Length() >= 5 && !(args[4]->IsUndefined() || args[4]->IsNull())){
+        if (!args[4]->IsNumber()){
+            ThrowException(Exception::TypeError(String::New("when defined, memlimit must be a positive integer")));
+            return scope.Close(Undefined());
+        } else {
+            size_t memlimitArg = args[4]->IntegerValue();
+            //Check parameter value
+            if (memlimitArg <= 0){
+                ThrowException(Exception::RangeError(String::New("when defined, memlimit must be a positive integer")));
+                return scope.Close(Undefined());
+            }
+            memlimit = memlimitArg;
+        }
+    }
+
+    NEW_BUFFER_AND_PTR(key, keyLength);
+
+    if (crypto_pwhash_scryptsalsa208sha256(key_ptr, keyLength, (char*) password, password_size, salt, opslimit, memlimit) != 0){
+        ThrowException(Exception::Error(String::New("out of memory")));
+        return scope.Close(Undefined());
+    }
+    return scope.Close(key->handle_);
+
+}
 
 /**
  * int crypto_auth(
@@ -1146,6 +1226,15 @@ void RegisterModule(Handle<Object> target) {
     NEW_INT_PROP(crypto_hash_BYTES);
     //NEW_INT_PROP(crypto_hash_BLOCKBYTES); //Seems that this constant isn't available anymore
     NEW_STRING_PROP(crypto_hash_PRIMITIVE);
+
+    // Password hash / Key derivation
+    NEW_METHOD(crypto_pwhash_scryptsalsa208sha256);
+    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_SALTBYTES);
+    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_STRBYTES);
+    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_SENSITIVE);
+    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE);
+    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_SENSITIVE);
+    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE);
 
     // Auth
     NEW_METHOD(crypto_auth);
