@@ -393,7 +393,92 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256(const Arguments& args){
         ThrowException(Exception::Error(String::New("out of memory")));
         return scope.Close(Undefined());
     }
-    return scope.Close(key->handle_);
+    return scope.Close(key_handle);
+
+}
+
+/**
+* int crypto_pwhash_scryptsalsa208sha256_ll(const uint8_t * passwd, size_t passwdlen,
+*                                      const uint8_t * salt, size_t saltlen,
+*                                      uint64_t N, uint32_t r, uint32_t p,
+*                                      uint8_t * buf, size_t buflen)
+*/
+Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256_ll(const Arguments& args){
+    HandleScope scope;
+    // scrypt(pass, salt, opsLimit, r, p, keyLength)
+    NUMBER_OF_MANDATORY_ARGS(2, "arguments password and salt must be a buffers");
+
+    unsigned long long N = crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE;
+    unsigned int r = 8;
+    unsigned int p = 1;
+    unsigned int keyLength = 32;
+
+    GET_ARG_AS_UCHAR(0, password);
+    GET_ARG_AS_UCHAR(1, salt);
+
+    if (args.Length() >= 3 && !(args[2]->IsUndefined() || args[2]->IsNull())){
+        if (!args[2]->IsNumber()){
+            ThrowException(Exception::TypeError(String::New("when defined, N must be a positive number")));
+            return scope.Close(Undefined());
+        } else {
+            long long nArg = (long long) args[2]->IntegerValue();
+            if (nArg <= 0){
+                ThrowException(Exception::RangeError(String::New("when defined, N must be a positive number")));
+                return scope.Close(Undefined());
+            }
+            N = (unsigned long long) nArg;
+        }
+    }
+
+    if (args.Length() >= 4 && !(args[3]->IsUndefined() || args[3]->IsNull())){
+        if (!args[3]->IsNumber()){
+            ThrowException(Exception::TypeError(String::New("when defined, r must be a positive integer")));
+            return scope.Close(Undefined());
+        } else {
+            int rArg = args[3]->Int32Value();
+            if (rArg <= 0){
+                ThrowException(Exception::RangeError(String::New("when defined, r must be a positive integer")));
+                return scope.Close(Undefined());
+            }
+            r = (unsigned int) rArg;
+        }
+    }
+
+    if (args.Length() >= 5 && !(args[4]->IsUndefined() || args[4]->IsNull())){
+        if (!args[4]->IsNumber()){
+            ThrowException(Exception::TypeError(String::New("when defined, p must be a positive integer")));
+            return scope.Close(Undefined());
+        } else {
+            int pArg = args[4]->Int32Value();
+            if (pArg <= 0){
+                ThrowException(Exception::RangeError(String::New("when defined, p must be a positive integer")));
+                return scope.Close(Undefined());
+            }
+            p = (unsigned int) pArg;
+        }
+    }
+
+    if (args.Length() >= 6 && !(args[5]->IsUndefined() || args[5]->IsNull())){
+        if (!args[5]->IsNumber()){
+            ThrowException(Exception::TypeError(String::New("when defined, keyLength must be a positive integer")));
+            return scope.Close(Undefined());
+        } else {
+            int keyLengthArg = args[5]->Int32Value();
+            if (keyLengthArg <= 0){
+                ThrowException(Exception::RangeError(String::New("when defined, keyLength must be a positive integer")));
+                return scope.Close(Undefined());
+            }
+            keyLength = (unsigned int) keyLengthArg;
+        }
+    }
+
+    NEW_BUFFER_AND_PTR(key, keyLength);
+
+    if (crypto_pwhash_scryptsalsa208sha256_ll(password, password_size, salt, salt_size, N, r, p, key_ptr, keyLength) != 0){
+        ThrowException(Exception::Error(String::New("out of memory")));
+        return scope.Close(Undefined());
+    }
+    return scope.Close(key_handle);
 
 }
 
@@ -1229,6 +1314,7 @@ void RegisterModule(Handle<Object> target) {
 
     // Password hash / Key derivation
     NEW_METHOD(crypto_pwhash_scryptsalsa208sha256);
+    NEW_METHOD(crypto_pwhash_scryptsalsa208sha256_ll);
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_SALTBYTES);
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_STRBYTES);
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_SENSITIVE);

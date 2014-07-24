@@ -42,8 +42,8 @@ git-getsodium:
 	git submodule add https://github.com/jedisct1/libsodium.git
 	git submodule update
 	cd libsodium; \
-	git reset --hard 5f8800bfa076e6d9556bd5a4e4bdb2a7047876d2; \
-	git checkout -f 5f8800bfa076e6d9556bd5a4e4bdb2a7047876d2
+	git reset --hard dc1e4b468dfb18cb69ab284cbc362288a1ce8df1; \
+	git checkout -f dc1e4b468dfb18cb69ab284cbc362288a1ce8df1
 
 clean:
 	-rm -fr lib-cov
