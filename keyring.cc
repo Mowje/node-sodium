@@ -576,13 +576,19 @@ bool KeyRing::doesFileExist(string const& filename){
 	return isGood;
 }
 
-void KeyRing::saveKeyPair(string const& filename, string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey){
+void KeyRing::saveKeyPair(string const& filename, string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey, unsigned char* password, size_t passwordSize, const unsigned long opsLimit, const unsigned int r, const unsigned int p){
 	fstream fileWriter(filename.c_str(), ios::out | ios::trunc);
 	/*string params[] = {"keyType", "privateKey", "publicKey"};
 	for (int i = 0; i < 3; i++){
 		if (!(keyPair->count(params[i]) > 0)) throw new runtime_error("Missing parameter when saving file : " + params[i]);
 	}*/
 	if (!((keyType == "ed25519" || keyType == "curve25519") && privateKey != 0 && publicKey != 0)) throw new runtime_error("Invalid parameters");
+
+	if (password != 0 && passwordSize > 0){
+
+	} else {
+
+	}
 
 	if (keyType == "curve25519"){
 		//Writing key type
@@ -622,17 +628,147 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 	fileWriter.close();
 }
 
-void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char* privateKey, unsigned char* publicKey){
+void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char* privateKey, unsigned char* publicKey, unsigned char* password, size_t passwordSize, unsigned long opsLimitBeforeException){
 	fstream fileReader(filename.c_str(), ios::in);
 	string keyStr;
-	getline(fileReader, keyStr);
-	fileReader.close();
-	stringstream keyStream(keyStr);
-	stringbuf* buffer = keyStream.rdbuf();
+
+	if (password != 0 && passwordSize > 0){
+		/* Encrypted key file format. Numbers are in big endian
+		* 1 byte : key type. 0x05 for Curve25519, 0x06 for Ed25519
+		* 2 bytes : r (unsigned short)
+		* 2 bytes : p (unsigned short)
+		* 8 bytes : opsLimit (unsigned long)
+		* 2 bytes: salt size (sn, unsigned short)
+		* 2 bytes : nonce size (ss, unsigned short)
+		* 4 bytes : key buffer size (x, unsigned long)
+		* sn btyes: salt
+		* ss bytes : nonce
+		* x bytes : encrypted key buffer
+		*/
+
+		//Variable that will be used to check the size of the file; that it corresponds to what the file is supposed to contain.
+		//With this technique, trying to avoid buffer overflows and potential RCEs that might come with them
+		unsigned short minRemainingSize = 21; //17 bytes from the above description + 4 bytes of the MAC of the encrypted key buffer
+
+		string encryptedKeyFileBuffer;
+		getline(fileReader, encryptedKeyFileBuffer);
+		fileReader.close();
+
+		stringstream encryptedKeyStream(encryptedKeyFileBuffer);
+		stringbuf* buf = encryptedKeyStream.rdbuf();
+
+		if (buf->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
+
+		//Reading key type
+		char keyTypeChar = buf->sbumpc(); //Key type. Checking its a valid value, instead of simply discarding it.
+		if (!(keyTypeChar == 0x05 || keyTypeChar == 0x06)){
+			throw new runtime_error("invalid key type");
+		}
+		minRemainingSize--;
+
+		//Reading r
+		unsigned short r;
+		r = ((unsigned short) buf->sbumpc()) << 8;
+		r += (unsigned short) buf->sbumpc();
+		minRemainingSize -= 2;
+
+		//Reading p
+		unsigned short p;
+		p = ((unsigned short) buf->sbumpc()) << 8;
+		p += (unsigned short) buf->sbumpc();
+		minRemainingSize -= 2;
+
+		//Reading opsLimit, N
+		unsigned long long opsLimit = 0;
+		for (int i = 7; i >= 0; i--){
+			opsLimit += ((unsigned long long) buf->sbumpc()) << (8 * i);
+		}
+		minRemainingSize -= 8;
+		// No need to check it (remainingSize condition) here. Need to check for correct available bytes after reading a variable length field, (or before reading the field itself but after reading the field's size, as done above with the salt)
+
+		//Check that N is within the user given limit
+		if (opsLimit > opsLimitBeforeException){
+			throw new runtime_error("Key file asks for more scrypt derivations than is allowed");
+		}
+
+		//Reading salt size
+		unsigned short saltSize;
+		saltSize = ((unsigned short) buf->sbumpc()) << 8;
+		saltSize += (unsigned short) buf->sbumpc();
+		minRemainingSize -= 2;
+		minRemainingSize += saltSize;
+		if (buf->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
+
+		//Reading nonce size
+		unsigned short nonceSize;
+		nonceSize = ((unsigned short) buf->sbumpc()) << 8;
+		nonceSize += (unsigned short) buf->sbumpc();
+		minRemainingSize -= 2;
+		minRemainingSize += nonceSize;
+		if (buf->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
+
+		if (nonceSize != crypto_secretbox_NONCEBYTES){
+			throw new runtime_error("Invalid nonce size");
+		}
+
+		//Reading encrypted key buffer size
+		unsigned long keyBufferSize = 0;
+		for (int i = 3; i >= 0; i--){
+			keyBufferSize += ((unsigned long) buf->sbumpc()) << (8 * i);
+		}
+		minRemainingSize -= 4;
+		minRemainingSize += keyBufferSize;
+		if (buf->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
+
+		//Reading salt
+		unsigned char* salt = new unsigned char[saltSize];
+		for (int i = 0; i < saltSize; i++){
+			salt[i] = (unsigned char) buf->sbumpc();
+		}
+		minRemainingSize -= saltSize;
+
+
+		unsigned char* nonce = new unsigned char[nonceSize];
+		for (int i = 0; i < nonceSize; i++){
+			nonce[i] = (unsigned char) buf->sbumpc();
+		}
+		minRemainingSize -= nonceSize;
+
+		unsigned int encryptedKeyLength = buf->in_avail();
+		unsigned char* encryptedKey = new unsigned char[encryptedKeyLength];
+		for(int i = 0; i < keyBufferSize; i++){
+			encryptedKey[i] = (unsigned char) buf->sbumpc();
+		}
+		minRemainingSize -= keyBufferSize;
+
+		unsigned short keySize = 32;
+		unsigned char* derivedKey = new unsigned char[keySize];
+
+		crypto_pwhash_scryptsalsa208sha256_ll(password, passwordSize, salt, saltSize, opsLimit, r, p, derivedKey, keySize);
+
+		unsigned int keyPlainTextLength = encryptedKeyLength - crypto_secretbox_MACBYTES;
+		unsigned char* keyPlainText = new unsigned char[keyPlainTextLength];
+
+		if (crypto_secretbox_open_easy(keyPlainText, encryptedKey, encryptedKeyLength, nonce, derivedKey) != 0){
+			throw new runtime_error("Invalid password or corrupted key file");
+		}
+
+		if (buf->in_avail() > 0) cout << "Key file loaded. However there are some \"left over bytes\"" << endl;
+
+		decodeKeyBuffer(string((char*) keyPlainText), keyType, privateKey, publicKey);
+
+	} else {
+		getline(fileReader, keyStr);
+		fileReader.close();
+		decodeKeyBuffer(keyStr, keyType, privateKey, publicKey);
+	}
+
+	/*stringstream keyStream(keyStr);
+	stringbuf* buffer = keyStream.rdbuf();*/
 	//Declaring the keyPair map
 	//map<string, string>* keyPair;
 	//Reading the keytype
-	char _keyType = buffer->sbumpc();
+	/*char _keyType = buffer->sbumpc();
 	if (!(_keyType == 0x05 || _keyType == 0x06)){ //Checking that the key type is valid
 		stringstream errMsg;
 		errMsg << "Invalid key type: " << (int) _keyType;
@@ -694,5 +830,152 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		}
 		//Building keypair map
 		*keyType = "ed25519";
+	}*/
+}
+
+static void decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey){
+	stringstream keyStream(keyBuffer);
+	stringbuf* buffer = keyStream.rdbuf();
+
+	/*
+	* 1 byte for key type. 0x05 for curve25519, 0x06 for Ed25519
+	* 2 bytes for public key length (pubL, unsigned short, BE)
+	* pubL bytes for public key
+	* 2 bytes for private key length (secL, unsigned short, BE)
+	* secL bytes for private key
+	*/
+	unsigned short minRemainingSize = 5;
+
+	if (buffer->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
+
+	char _keyType = buffer->sbumpc();
+	minRemainingSize--;
+
+	if (!(_keyType == 0x05 || _keyType == 0x06)){ //Checking that the key type is valid
+		stringstream errMsg;
+		errMsg << "Invalid key type: " << (int) _keyType;
+		throw new runtime_error(errMsg.str());
 	}
+
+	unsigned short publicKeyLength, privateKeyLength;
+	if (_keyType == 0x05){ //Curve25519
+		//Getting public key length
+		publicKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		publicKeyLength += (unsigned short) buffer->sbumpc();
+		//Checking size validity
+		minRemainingSize -= 2;
+		if (buffer->in_avail() < minRemainingSize + publicKeyLength) throw new runtime_error("corrupted key file");
+
+		if (publicKeyLength != crypto_box_PUBLICKEYBYTES){ //Checking key length
+			stringstream errMsg;
+			errMsg << "Invalid public key length : " << publicKeyLength;
+			throw new runtime_error(errMsg.str());
+		}
+		//Getting public key
+		for (unsigned int i = 0; i < publicKeyLength; i++){
+			publicKey[i] = buffer->sbumpc();
+		}
+
+		//Getting private key length
+		privateKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		privateKeyLength += (unsigned short) buffer->sbumpc();
+		//Checking size validity
+		minRemainingSize -= 2;
+		if (buffer->in_avail() < minRemainingSize + privateKeyLength) throw new runtime_error("corrupted key file");
+
+		if (privateKeyLength != crypto_box_SECRETKEYBYTES){ //Checking key length
+			stringstream errMsg;
+			errMsg << "Invalid private key length : " << privateKeyLength;
+			throw new runtime_error(errMsg.str());
+		}
+		//Getting private key
+		for (unsigned int i = 0; i < privateKeyLength; i++){
+			privateKey[i] = buffer->sbumpc();
+		}
+
+		if (buffer->in_avail() > 0) cout << "Key buffer loaded. However there are some \"left over bytes\"" << endl;
+
+		//Building keypair map
+		*keyType = "curve25519";
+	} else if (_keyType == 0x06){ //Ed25519
+		//Getting public key length
+		publicKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		publicKeyLength += (unsigned short) buffer->sbumpc();
+		//Checking size validity
+		minRemainingSize -= 2;
+		if (buffer->in_avail() < minRemainingSize + publicKeyLength) throw new runtime_error("corrupted key file");
+
+		if (publicKeyLength != crypto_sign_PUBLICKEYBYTES){ //Checking key length
+			stringstream errMsg;
+			errMsg << "Invalid public key length : " << publicKeyLength;
+			throw new runtime_error(errMsg.str());
+		}
+		//Getting public key
+		for (unsigned int i = 0; i < publicKeyLength; i++){
+			publicKey[i] = buffer->sbumpc();
+		}
+
+		//Getting private key length
+		privateKeyLength = ((unsigned short) buffer->sbumpc()) << 8;
+		privateKeyLength += (unsigned short) buffer->sbumpc();
+		//Checking size validity
+		minRemainingSize -= 2;
+		if (buffer->in_avail() < minRemainingSize + privateKeyLength) throw new runtime_error("corrupted key file");
+
+		if (privateKeyLength != crypto_sign_SECRETKEYBYTES){ //Cheking key length
+			stringstream errMsg;
+			errMsg << "Invalid private key length : " << privateKeyLength;
+			throw new runtime_error(errMsg.str());
+		}
+		//Getting private key
+		for (unsigned int i = 0; i < privateKeyLength; i++){
+			privateKey[i] = buffer->sbumpc();
+		}
+
+		if (buffer->in_avail() > 0) cout << "Key buffer loaded. However there are some \"left over bytes\"" << endl;
+
+		//Building keypair map
+		*keyType = "ed25519";
+	}
+}
+
+static std::string encodeKeyBuffer(std::string const& keyType, unsigned char* privateKey, unsigned char* publicKey){
+	stringstream s;
+
+	if (keyType == "curve25519"){
+		//Writing key type
+		s << (unsigned char) 0x05;
+		//Writing public key length
+		s << (unsigned char) (crypto_box_PUBLICKEYBYTES >> 8);
+		s << (unsigned char) (crypto_box_PUBLICKEYBYTES);
+		//Writing public key
+		for (unsigned int i = 0; i < crypto_box_PUBLICKEYBYTES; i++){
+			s << (unsigned char) publicKey[i];
+		}
+		//Writing private key length
+		s << (unsigned char) (crypto_box_SECRETKEYBYTES >> 8);
+		s << (unsigned char) (crypto_box_SECRETKEYBYTES);
+		//Writing the private key
+		for (unsigned int i = 0; i < crypto_box_SECRETKEYBYTES; i++){
+			s << (unsigned char) privateKey[i];
+		}
+	} else if (keyType == "ed25519"){
+		//Writing key type
+		s << (unsigned char) 0x06;
+		//Writing public key length
+		s << (unsigned char) (crypto_sign_PUBLICKEYBYTES >> 8);
+		s << (unsigned char) (crypto_sign_PUBLICKEYBYTES);
+		//Writing the public key
+		for (unsigned int i = 0; i < crypto_sign_PUBLICKEYBYTES; i++){
+			s << (unsigned char) publicKey[i];
+		}
+		//Writing private key length
+		s << (unsigned char) (crypto_sign_SECRETKEYBYTES >> 8);
+		s << (unsigned char) (crypto_sign_SECRETKEYBYTES);
+		//Writing the private key
+		for (unsigned int i = 0; i < crypto_sign_SECRETKEYBYTES; i++){
+			s << (unsigned char) privateKey[i];
+		}
+	} else throw new runtime_error("Unknown key type: " + keyType);
+	return s.str();
 }
