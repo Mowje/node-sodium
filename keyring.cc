@@ -584,13 +584,62 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 	}*/
 	if (!((keyType == "ed25519" || keyType == "curve25519") && privateKey != 0 && publicKey != 0)) throw new runtime_error("Invalid parameters");
 
+	string keyBufferStr = encodeKeyBuffer(keyType, privateKey, publicKey);
+
 	if (password != 0 && passwordSize > 0){
 
+		//Write key type
+		if (keyType == "curve25519") fileWriter << (unsigned char) 0x05;
+		else fileWriter << (unsigned char) 0x06; //ed25519
+		//Write r (2bytes)
+		fileWriter << (unsigned char) (r >> 8);
+		fileWriter << (unsigned char) r;
+		//Write p (2bytes)
+		fileWriter << (unsigned char) (p >> 8);
+		fileWriter << (unsigned char) p;
+		//Write opsLimit (8bytes)
+		for (unsigned short i = 7; i >= 0; i--){
+			fileWriter << (unsigned char) (opsLimit >> 8 * i);
+		}
+		//Write saltSize (2bytes)
+		unsigned short saltSize = 8;
+		fileWriter << (unsigned char) (saltSize >> 8);
+		fileWriter << (unsigned char) saltSize;
+		//Write nonceSize (2bytes)
+		unsigned short nonceSize = crypto_secretbox_NONCEBYTES;
+		fileWriter << (unsigned char) (nonceSize >> 8);
+		fileWriter << (unsigned char) nonceSize;
+		//Write keyBufferSize (4bytes)
+		unsigned short keyBufferSize = keyBufferStr.length() + crypto_secretbox_MACBYTES;
+		fileWriter << (unsigned char) (keyBufferSize >> 8);
+		fileWriter << (unsigned char) keyBufferSize;
+		//Generate salt
+		unsigned char* salt = new unsigned char[saltSize];
+		randombytes_buf(salt, saltSize);
+		//Write salt
+		for (unsigned short i = 0; i < saltSize; i++) fileWriter << ((unsigned char) salt[i]);
+		//Generate nonce
+		unsigned char* nonce = new unsigned char[nonceSize];
+		randombytes_buf(nonce, nonceSize);
+		//Write nonce
+		for (unsigned short i = 0; i < nonceSize; i++) fileWriter << ((unsigned char) nonce[i]);
+		//Derive password
+		unsigned short derivedKeySize = 32;
+		unsigned char* derivedKey = new unsigned char[derivedKeySize];
+		crypto_pwhash_scryptsalsa208sha256_ll(password, passwordSize, salt, saltSize, opsLimit, r, p, derivedKey, derivedKeySize);
+
+		//Encrypt
+		unsigned char* encryptedKey = new unsigned char[keyBufferSize];
+		crypto_secretbox_easy(encryptedKey, (unsigned char*) keyBufferStr.c_str(), keyBufferStr.length(), nonce, derivedKey);
+		//Write the encrypted key
+		for (unsigned long i = 0; i < keyBufferSize; i++) fileWriter << ((unsigned char) encryptedKey[i]);
+
 	} else {
-
+		fileWriter << keyBufferStr;
 	}
+	fileWriter.close();
 
-	if (keyType == "curve25519"){
+	/*if (keyType == "curve25519"){
 		//Writing key type
 		fileWriter << (unsigned char) 0x05;
 		//Writing public key length
@@ -625,12 +674,17 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 			fileWriter << (unsigned char) privateKey[i];
 		}
 	} else throw new runtime_error("Unknown key type: " + keyType);
-	fileWriter.close();
+	fileWriter.close();*/
 }
 
 void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char* privateKey, unsigned char* publicKey, unsigned char* password, size_t passwordSize, unsigned long opsLimitBeforeException){
 	fstream fileReader(filename.c_str(), ios::in);
-	string keyStr;
+	filebuf* fileBuffer = fileReader.rdbuf();
+	string keyStr = "";
+	while(fileBuffer->in_avail() > 0){
+		keyStr += (char) fileBuffer->sbumpc();
+	}
+	fileReader.close();
 
 	if (password != 0 && passwordSize > 0){
 		/* Encrypted key file format. Numbers are in big endian
@@ -650,11 +704,11 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		//With this technique, trying to avoid buffer overflows and potential RCEs that might come with them
 		unsigned short minRemainingSize = 21; //17 bytes from the above description + 4 bytes of the MAC of the encrypted key buffer
 
-		string encryptedKeyFileBuffer;
+		/*string encryptedKeyFileBuffer;
 		getline(fileReader, encryptedKeyFileBuffer);
-		fileReader.close();
+		fileReader.close();*/
 
-		stringstream encryptedKeyStream(encryptedKeyFileBuffer);
+		stringstream encryptedKeyStream(keyStr);
 		stringbuf* buf = encryptedKeyStream.rdbuf();
 
 		if (buf->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
@@ -736,7 +790,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 
 		unsigned int encryptedKeyLength = buf->in_avail();
 		unsigned char* encryptedKey = new unsigned char[encryptedKeyLength];
-		for(int i = 0; i < keyBufferSize; i++){
+		for (unsigned long i = 0; i < keyBufferSize; i++){
 			encryptedKey[i] = (unsigned char) buf->sbumpc();
 		}
 		minRemainingSize -= keyBufferSize;
@@ -758,8 +812,6 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		decodeKeyBuffer(string((char*) keyPlainText), keyType, privateKey, publicKey);
 
 	} else {
-		getline(fileReader, keyStr);
-		fileReader.close();
 		decodeKeyBuffer(keyStr, keyType, privateKey, publicKey);
 	}
 
@@ -893,8 +945,6 @@ static void decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, 
 			privateKey[i] = buffer->sbumpc();
 		}
 
-		if (buffer->in_avail() > 0) cout << "Key buffer loaded. However there are some \"left over bytes\"" << endl;
-
 		//Building keypair map
 		*keyType = "curve25519";
 	} else if (_keyType == 0x06){ //Ed25519
@@ -932,11 +982,10 @@ static void decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, 
 			privateKey[i] = buffer->sbumpc();
 		}
 
-		if (buffer->in_avail() > 0) cout << "Key buffer loaded. However there are some \"left over bytes\"" << endl;
-
 		//Building keypair map
 		*keyType = "ed25519";
 	}
+	if (buffer->in_avail() > 0) cout << "Key buffer loaded. However there are some \"left over bytes\"" << endl;
 }
 
 static std::string encodeKeyBuffer(std::string const& keyType, unsigned char* privateKey, unsigned char* publicKey){
