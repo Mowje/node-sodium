@@ -885,7 +885,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 	}*/
 }
 
-static void decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey){
+void KeyRing::decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey){
 	stringstream keyStream(keyBuffer);
 	stringbuf* buffer = keyStream.rdbuf();
 
@@ -988,7 +988,7 @@ static void decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, 
 	if (buffer->in_avail() > 0) cout << "Key buffer loaded. However there are some \"left over bytes\"" << endl;
 }
 
-static std::string encodeKeyBuffer(std::string const& keyType, unsigned char* privateKey, unsigned char* publicKey){
+std::string KeyRing::encodeKeyBuffer(std::string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey){
 	stringstream s;
 
 	if (keyType == "curve25519"){
