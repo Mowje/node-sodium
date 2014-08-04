@@ -56,13 +56,13 @@ using namespace std;
 
 Persistent<Function> KeyRing::constructor;
 
-KeyRing::KeyRing(string filename) : _filename(filename), _privateKey(0), _publicKey(0){
+KeyRing::KeyRing(string const& filename, unsigned char* password, size_t passwordSize) : _filename(filename), _privateKey(0), _publicKey(0){
 	if (filename != ""){
 		if (!doesFileExist(filename)){
 			//Throw a V8 exception??
 			return;
 		}
-		loadKeyPair(filename, &_keyType, _privateKey, _publicKey);
+		loadKeyPair(filename, &_keyType, _privateKey, _publicKey, password, passwordSize);
 		_filename = filename;
 	}
 }
@@ -107,27 +107,50 @@ Handle<Value> KeyRing::New(const Arguments& args){
 	if (args.IsConstructCall()){
 		//Invoked as a constructor
 		string filename;
+		unsigned char* password = 0;
+		size_t passwordSize = 0;
 		if (args[0]->IsUndefined()){
 			filename = "";
 		} else {
 			String::Utf8Value filenameVal(args[0]->ToString());
 			filename = string(*filenameVal);
 		}
-		KeyRing* newInstance = new KeyRing(filename);
+		if (args.Length() > 1 && !args[1]->IsUndefined()){
+			//Casting password
+			Local<Object> passwordVal = args[1]->ToObject();
+
+			password = (unsigned char*) Buffer::Data(passwordVal);
+			passwordSize = Buffer::Length(passwordVal);
+		}
+		KeyRing* newInstance = new KeyRing(filename, password, passwordSize);
 		newInstance->Wrap(args.This());
 		return args.This();
 	} else {
 		//Invoked as a plain function; turn it into construct call
-		if (args.Length() > 1){
+		if (args.Length() > 2){
 			ThrowException(Exception::TypeError(String::New("Invalid number of arguments on KeyRing constructor call")));
 			return scope.Close(Undefined());
 		}
-		if (args.Length() == 1){
+		if (args.Length() > 0){
+			unsigned int argsLength = args.Length();
+			Local<Value> * argvPtr = NULL;
+			if (argsLength == 1){
+				Local<Value> argv[1] = {args[0]};
+				argvPtr = argv;
+			} else if (argsLength == 2){
+				Local<Value> argv[2] = {args[0], args[1]};
+				argvPtr = argv;
+			}
+			return scope.Close(constructor->NewInstance(argsLength, argvPtr));
+		} else return scope.Close(constructor->NewInstance());
+
+
+		/*if (args.Length() == 1){
 			Local<Value> argv[1] = { args[0] };
 			return scope.Close(constructor->NewInstance(1, argv));
 		} else {
 			return scope.Close(constructor->NewInstance());
-		}
+		}*/
 	}
 }
 
@@ -424,6 +447,7 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 	String::Utf8Value filenameVal(args[0]->ToString());
 	string filename(*filenameVal);
 
+
 	if (instance->_keyType == ""){
 		instance->_keyType = "";
 	}
@@ -469,6 +493,7 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 	if (args.Length() == 1){
 		return scope.Close( instance->PPublicKeyInfo() );
 	} else {
+		if (args[1]->IsUndefined()) return scope.Close( instance->PPublicKeyInfo() );
 		Local<Function> callback = Local<Function>::Cast(args[1]);
 		const int argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
@@ -633,6 +658,11 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 		crypto_secretbox_easy(encryptedKey, (unsigned char*) keyBufferStr.c_str(), keyBufferStr.length(), nonce, derivedKey);
 		//Write the encrypted key
 		for (unsigned long i = 0; i < keyBufferSize; i++) fileWriter << ((unsigned char) encryptedKey[i]);
+
+		delete salt;
+		delete nonce;
+		delete derivedKey;
+		delete encryptedKey;
 
 	} else {
 		fileWriter << keyBufferStr;
@@ -810,6 +840,12 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		if (buf->in_avail() > 0) cout << "Key file loaded. However there are some \"left over bytes\"" << endl;
 
 		decodeKeyBuffer(string((char*) keyPlainText), keyType, privateKey, publicKey);
+
+		delete salt;
+		delete nonce;
+		delete encryptedKey;
+		delete derivedKey;
+		delete keyPlainText;
 
 	} else {
 		decodeKeyBuffer(keyStr, keyType, privateKey, publicKey);

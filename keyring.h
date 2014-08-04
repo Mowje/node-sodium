@@ -12,7 +12,7 @@ public:
 	static void Init(v8::Handle<v8::Object> exports);
 
 private:
-	explicit KeyRing(std::string filename = "");
+	explicit KeyRing(std::string const& filename = "", unsigned char* password = 0, size_t passwordSize = 0);
 	~KeyRing();
 	//Internal attributes
 	//std::map<std::string, std::string>* keyPair;
