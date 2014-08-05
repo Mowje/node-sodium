@@ -378,7 +378,7 @@ Local<Object> KeyRing::PPublicKeyInfo(){
 
 /*
 * Generates a keypair. Save it to filename if given
-* String keyType, String filename [optional], Function callback [optional]
+* String keyType, String filename [optional], Function callback [optional], Buffer passoword [optional], Number opsLimit [optional], Number r [optional], Number p [optional]
 */
 Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 	PREPARE_FUNC_VARS();
@@ -425,10 +425,29 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 	if (args.Length() >= 2 && !args[1]->IsUndefined()){ //Save keypair to file
 		String::Utf8Value filenameVal(args[1]->ToString());
 		string filename(*filenameVal);
-		saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey);
+		if (args.Length() > 3 && !args[3]->IsUndefined()){
+			Local<Value> passwordVal = args[3]->ToObject();
+			const unsigned char* password = (unsigned char*) Buffer::Data(passwordVal);
+			const size_t passwordSize = Buffer::Length(passwordVal);
+			if (args.Length() > 4){
+				unsigned long opsLimit = 16384;
+				unsigned short r = 8;
+				unsigned short p = 1;
+				if (args[4]->IsNumber()){
+					opsLimit = (unsigned long) args[4]->IntegerValue();
+				}
+				if (args.Length() > 5 && args[5]->IsNumber()){
+					r = (unsigned short) args[4]->Int32Value();
+				}
+				if (args.Length() > 6 && args[6]->IsNumber()){
+					p = (unsigned short) args[5]->Int32Value();
+				}
+				saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey, password, passwordSize, opsLimit, r, p);
+			} else saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey, password, passwordSize);
+		} else saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey);
 		instance->_filename = filename;
 	}
-	if (args.Length() == 3){ //Callback
+	if (args.Length() >= 3){ //Callback
 		Local<Function> callback = Local<Function>::Cast(args[2]);
 		const unsigned argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
@@ -439,7 +458,7 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 	}
 }
 
-// String filename, Function callback (optional)
+// String filename, Function callback (optional), password, maxOpsLimit
 Handle<Value> KeyRing::Load(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : String filename\nOptional args : Function callback");
@@ -475,15 +494,36 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 		ThrowException(Exception::TypeError(String::New("Invalid key file")));
 	}
 
-	try {
-		loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey);
-	} catch (runtime_error* e){
-		string errMsg = e->what();
-		ThrowException(Exception::TypeError(String::New(errMsg.c_str())));
-		return scope.Close(Undefined());
-	} catch (void* e){
-		ThrowException(Exception::TypeError(String::New("Error while loading the key file")));
-		return scope.Close(Undefined());
+	if (args.Length() > 2){
+		Local<Value> passwordVal = args[2]->ToObject();
+		const unsigned char* password = (unsigned char*) Buffer::Data(passwordVal);
+		const size_t passwordSize = Buffer::Length(passwordVal);
+		unsigned long maxOpsLimit = 4194304;
+		if (args.Length() > 3 && args[3]->IsNumber()){
+			maxOpsLimit = (unsigned long) args[3]->IntegerValue();
+			//cout << "MaxOpsLimit: " << maxOpsLimit << endl;
+		}
+
+		try {
+			loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey, password, passwordSize, maxOpsLimit);
+		} catch (runtime_error* e){
+			ThrowException(Exception::Error(String::New(e->what())));
+			return scope.Close(Undefined());
+		} catch (void* e){
+			ThrowException(Exception::Error(String::New("Error while loading the encrypted key file")));
+			return scope.Close(Undefined());
+		}
+
+	} else {
+		try {
+			loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey);
+		} catch (runtime_error* e){
+			ThrowException(Exception::Error(String::New(e->what())));
+			return scope.Close(Undefined());
+		} catch (void* e){
+			ThrowException(Exception::Error(String::New("Error while loading the key file")));
+			return scope.Close(Undefined());
+		}
 	}
 
 	instance->_filename = filename;
@@ -502,7 +542,7 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 	}
 }
 
-// String filename, Function callback (optional)
+// String filename, Function callback (optional), Buffer password (optional), Number opsLimit (optional), Number r (optional), Number p (optional)
 Handle<Value> KeyRing::Save(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : String filename\nOptional args : Function callback");
@@ -515,18 +555,64 @@ Handle<Value> KeyRing::Save(const Arguments& args){
 	String::Utf8Value filenameVal(args[0]);
 	string filename(*filenameVal);
 
-	try {
-		saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey);
-	} catch (runtime_error* e){
-		string errMsg = e->what();
-		ThrowException(Exception::TypeError(String::New(errMsg.c_str())));
-		return scope.Close(Undefined());
-	} catch (void* e){
-		ThrowException(Exception::TypeError(String::New("Error while saving the key file")));
-		return scope.Close(Undefined());
+	if (args.Length() > 2){
+		if (args[2]->IsUndefined()){
+			ThrowException(Exception::TypeError(String::New("When using encryption, the password can't be null")));
+			return scope.Close(Undefined());
+		}
+
+		Local<Value> passwordVal = args[2]->ToObject();
+		const unsigned char* password = (unsigned char*) Buffer::Data(passwordVal);
+		const size_t passwordSize = Buffer::Length(passwordVal);
+
+		if (args.Length() > 3){
+			//Additional scrypt parameters
+			unsigned long opsLimit = 16384;
+			unsigned short r = 8;
+			unsigned short p = 1;
+			if (args[3]->IsNumber()){
+				opsLimit = (unsigned long) args[3]->IntegerValue();
+			}
+			if (args.Length() > 4 && args[4]->IsNumber()){
+				r = (unsigned short) args[4]->Int32Value();
+			}
+			if (args.Length() > 5 && args[5]->IsNumber()){
+				p = (unsigned short) args[5]->Int32Value();
+			}
+			try {
+				saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey, password, passwordSize, opsLimit, r, p);
+			} catch (runtime_error* e){
+				ThrowException(Exception::Error(String::New(e->what())));
+				return scope.Close(Undefined());
+			} catch (void* e){
+				ThrowException(Exception::Error(String::New("Error while saving the encrypted key file")));
+				return scope.Close(Undefined());
+			}
+		} else {
+			try {
+				saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey, password, passwordSize);
+			} catch (runtime_error* e){
+				ThrowException(Exception::Error(String::New(e->what())));
+				return scope.Close(Undefined());
+			} catch (void* e){
+				ThrowException(Exception::Error(String::New("Error while saving the encrypted key file")));
+				return scope.Close(Undefined());
+			}
+		}
+
+	} else {
+		try {
+			saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey);
+		} catch (runtime_error* e){
+			ThrowException(Exception::Error(String::New(e->what())));
+			return scope.Close(Undefined());
+		} catch (void* e){
+			ThrowException(Exception::Error(String::New("Error while saving the key file")));
+			return scope.Close(Undefined());
+		}
 	}
 
-	if (args.Length() == 1){
+	if (args.Length() == 1 || (args.Length() > 1 && args[1]->IsUndefined())){
 		return scope.Close(Undefined());
 	} else {
 		Local<Function> callback = Local<Function>::Cast(args[1]);
@@ -554,10 +640,6 @@ Handle<Value> KeyRing::Clear(const Arguments& args){
 	instance->_filename = "";
 	return scope.Close(Undefined());
 }
-
-/*map<string, string>* KeyRing::edwardsToMontgomery(map<string, string>* edwards){
-
-}*/
 
 string KeyRing::strToHex(string const& s){
 	static const char* const charset = "0123456789abcdef";
@@ -601,7 +683,7 @@ bool KeyRing::doesFileExist(string const& filename){
 	return isGood;
 }
 
-void KeyRing::saveKeyPair(string const& filename, string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey, unsigned char* password, size_t passwordSize, const unsigned long opsLimit, const unsigned int r, const unsigned int p){
+void KeyRing::saveKeyPair(string const& filename, string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey, const unsigned char* password, const size_t passwordSize, const unsigned long opsLimit, const unsigned int r, const unsigned int p){
 	fstream fileWriter(filename.c_str(), ios::out | ios::trunc);
 	/*string params[] = {"keyType", "privateKey", "publicKey"};
 	for (int i = 0; i < 3; i++){
@@ -611,33 +693,45 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 
 	string keyBufferStr = encodeKeyBuffer(keyType, privateKey, publicKey);
 
-	if (password != 0 && passwordSize > 0){
+	//cout << "Key buffer: " << strToHex(keyBufferStr) << endl;
 
+	if (passwordSize > 0){
+		//cout << "Password has been provided" << endl;
 		//Write key type
 		if (keyType == "curve25519") fileWriter << (unsigned char) 0x05;
 		else fileWriter << (unsigned char) 0x06; //ed25519
+		//cout << "Type, " << endl;
 		//Write r (2bytes)
 		fileWriter << (unsigned char) (r >> 8);
 		fileWriter << (unsigned char) r;
+		//cout << "R, " << endl;
 		//Write p (2bytes)
 		fileWriter << (unsigned char) (p >> 8);
 		fileWriter << (unsigned char) p;
+		//cout << "P, " << endl;
 		//Write opsLimit (8bytes)
-		for (unsigned short i = 7; i >= 0; i--){
-			fileWriter << (unsigned char) (opsLimit >> 8 * i);
+		for (unsigned short i = 8; i > 0; i--){
+			fileWriter << (unsigned char) (opsLimit >> (8 * (i - 1)));
 		}
+		//cout << "OpsLimit" << endl;
 		//Write saltSize (2bytes)
 		unsigned short saltSize = 8;
+		//cout << "Salt size: " << saltSize << endl;
 		fileWriter << (unsigned char) (saltSize >> 8);
 		fileWriter << (unsigned char) saltSize;
 		//Write nonceSize (2bytes)
 		unsigned short nonceSize = crypto_secretbox_NONCEBYTES;
+		//cout << "Nonce size: " << nonceSize << endl;
 		fileWriter << (unsigned char) (nonceSize >> 8);
 		fileWriter << (unsigned char) nonceSize;
 		//Write keyBufferSize (4bytes)
 		unsigned short keyBufferSize = keyBufferStr.length() + crypto_secretbox_MACBYTES;
-		fileWriter << (unsigned char) (keyBufferSize >> 8);
-		fileWriter << (unsigned char) keyBufferSize;
+		//cout << "Encrypted buffer size: " << keyBufferSize << endl;
+		for (unsigned short i = 4; i > 0; i--){
+			fileWriter << (unsigned char) (keyBufferSize >> (8 * (i - 1)));
+		}
+		//fileWriter << (unsigned char) (keyBufferSize >> 8);
+		//fileWriter << (unsigned char) keyBufferSize;
 		//Generate salt
 		unsigned char* salt = new unsigned char[saltSize];
 		randombytes_buf(salt, saltSize);
@@ -665,6 +759,7 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 		delete encryptedKey;
 
 	} else {
+		//cout << "No password has been provided" << endl;
 		fileWriter << keyBufferStr;
 	}
 	fileWriter.close();
@@ -707,7 +802,7 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 	fileWriter.close();*/
 }
 
-void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char* privateKey, unsigned char* publicKey, unsigned char* password, size_t passwordSize, unsigned long opsLimitBeforeException){
+void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char* privateKey, unsigned char* publicKey, const unsigned char* password, const size_t passwordSize, unsigned long opsLimitBeforeException){
 	fstream fileReader(filename.c_str(), ios::in);
 	filebuf* fileBuffer = fileReader.rdbuf();
 	string keyStr = "";
@@ -716,7 +811,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 	}
 	fileReader.close();
 
-	if (password != 0 && passwordSize > 0){
+	if (passwordSize > 0){
 		/* Encrypted key file format. Numbers are in big endian
 		* 1 byte : key type. 0x05 for Curve25519, 0x06 for Ed25519
 		* 2 bytes : r (unsigned short)
@@ -725,7 +820,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		* 2 bytes: salt size (sn, unsigned short)
 		* 2 bytes : nonce size (ss, unsigned short)
 		* 4 bytes : key buffer size (x, unsigned long)
-		* sn btyes: salt
+		* sn bytes: salt
 		* ss bytes : nonce
 		* x bytes : encrypted key buffer
 		*/
@@ -781,6 +876,8 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		saltSize += (unsigned short) buf->sbumpc();
 		minRemainingSize -= 2;
 		minRemainingSize += saltSize;
+		//cout << "Available bytes after reading salt size: " << buf->in_avail() << endl;
+		//cout << "minRemainingSize: " << minRemainingSize << endl;
 		if (buf->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
 
 		//Reading nonce size
@@ -789,6 +886,8 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		nonceSize += (unsigned short) buf->sbumpc();
 		minRemainingSize -= 2;
 		minRemainingSize += nonceSize;
+		//cout << "Available bytes after reading nonce size: " << buf->in_avail() << endl;
+		//cout << "minRemainingSize: " << minRemainingSize << endl;
 		if (buf->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
 
 		if (nonceSize != crypto_secretbox_NONCEBYTES){
@@ -799,6 +898,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		unsigned long keyBufferSize = 0;
 		for (int i = 3; i >= 0; i--){
 			keyBufferSize += ((unsigned long) buf->sbumpc()) << (8 * i);
+			//cout << "I : " << i << endl;
 		}
 		minRemainingSize -= 4;
 		minRemainingSize += keyBufferSize;
@@ -810,7 +910,6 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 			salt[i] = (unsigned char) buf->sbumpc();
 		}
 		minRemainingSize -= saltSize;
-
 
 		unsigned char* nonce = new unsigned char[nonceSize];
 		for (int i = 0; i < nonceSize; i++){
@@ -839,7 +938,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 
 		if (buf->in_avail() > 0) cout << "Key file loaded. However there are some \"left over bytes\"" << endl;
 
-		decodeKeyBuffer(string((char*) keyPlainText), keyType, privateKey, publicKey);
+		decodeKeyBuffer(string((char*) keyPlainText, keyPlainTextLength), keyType, privateKey, publicKey);
 
 		delete salt;
 		delete nonce;
@@ -933,6 +1032,8 @@ void KeyRing::decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType
 	* secL bytes for private key
 	*/
 	unsigned short minRemainingSize = 5;
+
+	//cout << "decoding buffer: " << strToHex(keyBuffer) << endl;
 
 	if (buffer->in_avail() < minRemainingSize) throw new runtime_error("corrupted key file");
 

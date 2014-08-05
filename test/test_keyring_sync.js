@@ -7,10 +7,10 @@ var keyring1 = new sodium.KeyRing();
 var keyring2 = new sodium.KeyRing();
 
 if (process.argv[2] && process.argv[2].toLowerCase() == 'delete'){
-	fs.unlinkSync('./c25519-1.key');
-	fs.unlinkSync('./c25519-2.key');
-	fs.unlinkSync('./ed25519-1.key');
-	fs.unlinkSync('./ed25519-2.key');
+	if (fs.existsSync('./c25519-1.key')) fs.unlinkSync('./c25519-1.key');
+	if (fs.existsSync('./c25519-2.key')) fs.unlinkSync('./c25519-2.key');
+	if (fs.existsSync('./ed25519-1.key')) fs.unlinkSync('./ed25519-1.key');
+	if (fs.existsSync('./ed25519-2.key')) fs.unlinkSync('./ed25519-2.key');
 }
 
 var pubKey1, pubKey2;
@@ -52,7 +52,7 @@ var testCurve25519 = function(callback){
 	//console.log('Plaintext 1 : ' + plaintext1.toString() + '\nPlaintext 2 : ' + plaintext2.toString());
 	assert.equal(message1, plaintext1.toString(), 'Initial message 1 and decrypted message aren\'t identitcal!');
 	assert.equal(message2, plaintext2.toString(), 'Initial message 2 and decrypted message aren\'t identitcal!');
-	
+
 	if (callback && typeof callback == 'function') callback();
 };
 //Ed25519 signatures

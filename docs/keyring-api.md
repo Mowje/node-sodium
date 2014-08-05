@@ -32,17 +32,35 @@ Additionally :
 
 ## Methods :
 
-* `KeyRing([String filename])` : Constructor function
+* `KeyRing([String filename], [String|Buffer password])` : Constructor function
 	* String filename : Optional. Path to a key file to be loaded into the KeyRing upon construction
-* `KeyRing.createKeyPair(String keyType, [String filename], [Function callback])`
+* `KeyRing.createKeyPair(String keyType, [String filename], [Function callback], [String|Buffer password], [Number opsLimit], [Number r], [Number p])`
 	* String keyType : 'curve25519' or 'ed25519'. Other values will raise an exception
 	* String filename : path where you want to save the key once it's generated. Optional
 	* Function callback : Optional. Function that will take the `PublicKeyInfo` object if the generation succeeds (ie, if parameters are valid)
+	* String|Buffer password : Password that will be used to encrypt the newly generated key. Password will be derived through [scrypt](https://www.tarsnap.com/scrypt.html), using default parameters (opsLimit = 16384, r = 8, p = 1; could be overwritten using the arguments that follow. Optional.
+	* Number opsLimit : limit number of operations for the scrypt key derivation. Optional. Defaults to 16384
+	* Number r : r parameter of scrypt. Optional. Defaults to r = 8
+	* Number p : p parameter of scrypt. Optional. Defaults to p = 1
 	* Returns the `PublicKeyInfo` object (if no callback has been given)
 * `KeyRing.publicKeyInfo([Function callback])`
 	Returns an object (or passes it to the callback, if defined) containing the `keyType` and the `publicKey` (as hex-encoded string)
 * `KeyRing.clear()`
 	Clears the loaded key from memory
+* `KeyRing.load(String filename, [Function callback], [String|Buffer password], [Number maxOpsLimit])`
+	* String filename : path to the key file
+	* Function callback : callback function that will receive the PublicKeyInfo object of the key that just has been loaded. Optional
+	* String|Buffer password : password that will be used to decrypt the file, if that is needed. Optional.
+	* Number maxOpsLimit : max number of scrypt operations before throwing an exception. This parameter is a counter-measure to key files that might have an opsLimit parameter way to high and that might freeze your program when you load them. Defaults to 4194304 (= 2^22). Optional.
+	* Returns the `PublicKeyInfo` object (if no callback has been given)
+* `KeyRing.save(String filename, [Function callback], [String|Buffer password], [Number opsLimit], [Number r], [Number p])`
+	* String filename : path to the key file
+	* Function callback : callback function that will be called when the key has been saved
+	* String|Buffer password : Password that will be used to encrypt the key. Password will be derived through [scrypt](https://www.tarsnap.com/scrypt.html), using default parameters (opsLimit = 16384, r = 8, p = 1; could be overwritten using the arguments that follow. Optional.
+	* Number opsLimit : limit number of operations for the scrypt key derivation. Optional. Defaults to 16384
+	* Number r : r parameter of scrypt. Optional. Defaults to r = 8
+	* Number p : p parameter of scrypt. Optional. Defaults to p = 1
+	* Returns `Undefined`, in case no callback has been given
 * `KeyRing.encrypt(Buffer message, Buffer publicKey, Buffer nonce, [Function callback])`
 	* Buffer message : the message to encrypt
 	* Buffer publicKey : the receiver's public key
@@ -73,3 +91,18 @@ Note that numbers are written in big endian.
 * publicKey
 * privateKeyLength : 2 bytes, unsigned integer. Length of the private key, in bytes
 * privateKey
+
+## Encrypted key file format
+
+Note that numbers are written in big endian.
+
+* keyType : one byte, 0x05 for Curve25519, 0x06 for Ed25519
+* r : the r parameter of scrypt (unsigned short)
+* p : the p parameter of scrypt (unsigned short)
+* opsLimit : the maximum number of allowed iterations in scrypt (unsigned long)
+* saltSize : password salt size (sn, unsigned short)
+* nonceSize : encryption nonce (ss, unsigned short)
+* keyBufferSize : size of the key buffer that will be encrypted (x, unsigned long)
+* sn bytes: salt
+* ss bytes : nonce
+* x bytes : encrypted key buffer, (plain text is the content of a non-encrypted key file, as described above)

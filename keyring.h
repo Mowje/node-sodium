@@ -28,8 +28,8 @@ private:
 	//static std::map<std::string, std::string>* edwardsToMontgomery(std::map<std::string, std::string>* edwards);
 
 	//File methods
-	static void loadKeyPair(std::string const& filename, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey, unsigned char* password = 0, size_t passwordSize = 0, unsigned long opsLimitBeforeException = 4194304);
-	static void saveKeyPair(std::string const& filename, std::string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey, unsigned char* password = 0, size_t passwordSize = 0, const unsigned long opsLimit = 16384, const unsigned int r = 8, const unsigned int p = 1);
+	static void loadKeyPair(std::string const& filename, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey, const unsigned char* password = 0, const size_t passwordSize = 0, unsigned long opsLimitBeforeException = 4194304);
+	static void saveKeyPair(std::string const& filename, std::string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey, const unsigned char* password = 0, const size_t passwordSize = 0, const unsigned long opsLimit = 16384, const unsigned int r = 8, const unsigned int p = 1);
 	static bool doesFileExist(std::string const& filename);
 	static void decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey);
 	static std::string encodeKeyBuffer(std::string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey);
