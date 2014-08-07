@@ -26,7 +26,7 @@ Provides password-based key derivation with the scrypt function
 
 ## Functions
 
-### crypto_pwhash_scryptsalsa208sha256(Buffer password, Buffer salt, [Number resultKeyLength], [Number opsLimit], [Number memoryLimit])
+### crypto_pwhash_scryptsalsa208sha256(Buffer password, Buffer salt, [Number keyLength], [Number opsLimit], [Number memoryLimit])
 
 High-level call to scrypt. (In case you know about r and p parameters in scrypt, this method sorts these values out based on the memory limit; if you want to set r and p yourself, use the lower level function described below)
 Derives a password into a key of given length, through the (memory-intensive) scrypt function
@@ -35,16 +35,16 @@ Parameters:
 
   * `Buffer password` - the password to be derived
   * `Buffer salt` - the salt to be appended to the password before derivation. Length must be equal to crypto_pwhash_scryptsalsa208sha256_SALTBYTES (= 32 bytes)
-  * `Number resultKeyLength` - the desired length (in bytes) for the resulting key. Optional. Defaults to 32.
-  * `Number opsLimit` - the threshold of scrypt iterations. Optional. Defaults to crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE (= 16384)
-  * `Number memLimit` - the upper memory usage limit to be used in the key derivation. Optinal. Defaults to crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE (= 16777216)
+  * `Number keyLength` - the desired length (in bytes) for the resulting key. Optional. Defaults to 32.
+  * `Number opslimit` - the threshold of scrypt iterations. Optional. Defaults to crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE (= 16384)
+  * `Number memlimit` - the upper memory usage (in bytes) limit to be used in the key derivation. Must be a power of 2. Optional. Defaults to crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE (= 16777216)
 
 Returns:
 
   * Buffer containing the resulting key
   * Throws exceptions if salt is of wrong length, or if the given numeric parameters aren't positive integers
 
-### crypto_pwhash_scryptsalsa208sha256_ll(Buffer password, Buffer salt, [Number opsLimit], [Number r], [Number p], [Number resultKeyLength])
+### crypto_pwhash_scryptsalsa208sha256_ll(Buffer password, Buffer salt, [Number opsLimit], [Number r], [Number p], [Number keyLength])
 
 Low-level call to scrypt. r and p parameters can be set by yourself
 Derives a password into a key of given length, through the (memory-intensive) scrypt function
@@ -56,7 +56,7 @@ Parameters:
   * `Number opsLimit` - the threshold of scrypt iterations. Positive integer number. Optional. Defaults to crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE
   * `Number r` - the r parameter of the scrypt function. Positive integer number. Optional. Defaults to r = 8
   * `Number p` - the p parameter of the scrypt function. Positive integer number. Optional. Defaults to p = 1
-  * `Number resultKeyLength` - the result key length. Positive integer number. Optional. Defaults to 32 bytes
+  * `Number keyLength` - the result key length. Positive integer number. Optional. Defaults to 32 bytes
 
 Returns:
 
