@@ -93,6 +93,8 @@ void KeyRing::Init(Handle<Object> exports){
 	tpl->PrototypeTemplate()->Set(String::NewSymbol("load"), FunctionTemplate::New(Load)->GetFunction());
 	tpl->PrototypeTemplate()->Set(String::NewSymbol("save"), FunctionTemplate::New(Save)->GetFunction());
 	tpl->PrototypeTemplate()->Set(String::NewSymbol("clear"), FunctionTemplate::New(Clear)->GetFunction());
+	tpl->PrototypeTemplate()->Set(String::NewSymbol("setKeyBuffer"), FunctionTemplate::New(SetKeyBuffer)->GetFunction());
+	tpl->PrototypeTemplate()->Set(String::NewSymbol("getKeyBuffer"), FunctionTemplate::New(GetKeyBuffer)->GetFunction());
 
 	constructor = Persistent<Function>::New(tpl->GetFunction());
 	exports->Set(String::NewSymbol("KeyRing"), constructor);
@@ -639,6 +641,82 @@ Handle<Value> KeyRing::Clear(const Arguments& args){
 	}
 	instance->_filename = "";
 	return scope.Close(Undefined());
+}
+
+Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
+	HandleScope scope;
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	MANDATORY_ARGS(1, "Mandatory args: Buffer keyBuffer");
+
+	if (args[0]->IsUndefined()){
+		ThrowException(Exception::TypeError(String::New("keyBuffer must be a buffer")));
+		return scope.Close(Undefined());
+	}
+
+	const unsigned int c25519size = 1 + crypto_box_PUBLICKEYBYTES + crypto_box_SECRETKEYBYTES;
+	const unsigned int ed25519size = 1 + crypto_sign_PUBLICKEYBYTES + crypto_sign_SECRETKEYBYTES;
+
+	string keyBuffer;
+
+	if (args[0]->IsString() || args[0]->IsStringObject()){
+		String::Utf8Value bufferVal(args[0]->ToString());
+		keyBuffer = string(*bufferVal);
+
+	} else { //Supposing it's a buffer
+		Local<Object> keyBufferVal = args[0]->ToObject();
+		const char* keyBufferChar = Buffer::Data(keyBufferVal);
+		const size_t keyBufferSize = Buffer::Length(keyBufferVal);
+
+		keyBuffer = string(keyBufferChar, keyBufferSize);
+	}
+
+	if (keyBuffer[0] == 0x05 && keyBuffer.length() != c25519size){
+		ThrowException(Exception::TypeError(String::New("Invalid key size for Curve25519 keypair")));
+		return scope.Close(Undefined());
+	} else if (keyBuffer[0] == 0x06 && keyBuffer.length() != ed25519size){
+		ThrowException(Exception::TypeError(String::New("Invalid key size for Ed25519 keypair")));
+		return scope.Close(Undefined());
+	} else if (!(keyBuffer[0] == 0x05 || keyBuffer[0] == 0x06)) {
+		ThrowException(Exception::TypeError(String::New("Invalid key type")));
+		return scope.Close(Undefined());
+	}
+
+	//Dynamic memory freeing and reallocation
+	if (instance->_privateKey != 0){
+		delete instance->_privateKey;
+		instance->_privateKey = 0;
+	}
+	if (instance->_publicKey != 0){
+		delete instance->_publicKey;
+		instance->_publicKey = 0;
+	}
+	if (instance->_keyType != "") instance->_keyType = "";
+	if (instance->_filename != "") instance->_filename = "";
+
+	if (keyBuffer[0] == 0x05){
+		instance->_keyType = "curve25519";
+		instance->_privateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
+		instance->_publicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
+	} else {
+		instance->_keyType = "ed25519";
+		instance->_privateKey = new unsigned char[crypto_sign_SECRETKEYBYTES];
+		instance->_publicKey = new unsigned char[crypto_sign_PUBLICKEYBYTES];
+	}
+
+	decodeKeyBuffer(keyBuffer, &(instance->_keyType), instance->_privateKey, instance->_publicKey);
+	return scope.Close(Undefined());
+}
+
+Handle<Value> KeyRing::GetKeyBuffer(const Arguments& args){
+	HandleScope scope;
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+
+	if (!(instance->_privateKey != 0 && instance->_publicKey != 0)){
+		return scope.Close(Undefined());
+	}
+
+	string keyBuffer = encodeKeyBuffer(instance->_keyType, instance->_privateKey, instance->_publicKey);
+	return scope.Close(String::New(keyBuffer.c_str()));
 }
 
 string KeyRing::strToHex(string const& s){
