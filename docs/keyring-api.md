@@ -26,7 +26,8 @@ Don't forget to call the `clear` method once you're done using the keypair loade
 Also, when you want to skip an optional parameter but want to define an other parameter that follows it, you must set the first one to `undefined`. Sorry for the inconvenience.
 
 Additionally :
-`encrypt`, `decrypt`, `agree` can be called when the loaded key pair is a Curve25519 one. `sign` can be called when the loaded key pair is a Ed25519 one. In case it's not respected, an exception will be thrown.
+* `encrypt`, `decrypt`, `agree` can be called when the loaded key pair is a Curve25519 one. `sign` can be called when the loaded key pair is a Ed25519 one. In case it's not respected, an exception will be thrown.
+* Aside the `clear` method, all instance methods will throw an exception if no key is loaded in the keyring
 
 ----------------------
 
@@ -44,7 +45,7 @@ Additionally :
 	* Number p : p parameter of scrypt. Optional. Defaults to p = 1
 	* Returns the `PublicKeyInfo` object (if no callback has been given)
 * `KeyRing.publicKeyInfo([Function callback])`
-	Returns an object (or passes it to the callback, if defined) containing the `keyType` and the `publicKey` (as hex-encoded string)
+	Returns an object (or passes it to the callback, if defined) containing the `keyType` and the `publicKey` (as hex-encoded string).
 * `KeyRing.clear()`
 	Clears the loaded key from memory
 * `KeyRing.load(String filename, [Function callback], [String|Buffer password], [Number maxOpsLimit])`
@@ -61,6 +62,11 @@ Additionally :
 	* Number r : r parameter of scrypt. Optional. Defaults to r = 8
 	* Number p : p parameter of scrypt. Optional. Defaults to p = 1
 	* Returns `Undefined`, in case no callback has been given
+* `KeyRing.getKeyBuffer()`
+	Get the encoded key buffer. For security reasons, we advise you NOT TO USE this method for long-term key handling, especially not in server apps. If you don't know what I'm talking about, it's one more reason not to use this method at all.
+	* Returns `Buffer` containing the encoded key pair
+* `KeyRing.setKeyBuffer(Buffer keyBuffer)`
+	Sets the key pair of the keypair by loading its encoded buffer. For security reasons we advise you NOT TO USE this method for long-term key handling, especially not in server apps. If you don't know what I'm talking about, it's one more reason not to use this method at all.
 * `KeyRing.encrypt(Buffer message, Buffer publicKey, Buffer nonce, [Function callback])`
 	* Buffer message : the message to encrypt
 	* Buffer publicKey : the receiver's public key
