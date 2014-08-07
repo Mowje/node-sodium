@@ -1,3 +1,4 @@
+
 # Box Low Level API
 
 ## Detailed Description
@@ -48,7 +49,7 @@ Returns:
 
 ### crypto_box (message, nonce, pk, sk)
 
-Encrypts a message given the senders secret key, and receivers public key. 
+Encrypts a message given the senders secret key, and receivers public key.
 
 Parameters:
 
@@ -65,7 +66,7 @@ Returns:
 
 ### crypto_box_open (ctxt, nonce, pk, sk)
 
-Decrypts a ciphertext ctxt given the receivers private key, and senders public key and the same nonce that was used when calling `crypto_box`. 
+Decrypts a ciphertext ctxt given the receivers private key, and senders public key and the same nonce that was used when calling `crypto_box`.
 
 Parameters:
 
@@ -73,20 +74,20 @@ Parameters:
   * `nonce` - buffer with crypto box nonce
   * `pk` - buffer with sender's public key
   * `sk` - buffer with recipient's secret key
-  
-Returns 
+
+Returns
 
   * plain text buffer
   * `undefined` in case or error  
 
 ### crypto_box_beforenm (pk, sk)
-Partially performs the computation required for both encryption and decryption of data. 
+Partially performs the computation required for both encryption and decryption of data.
 
 Parameters:
 
   * `pk` - buffer with sender's public key
   * `sk` - buffer with recipient's secret key
-  
+
 Returns:
 
   * `k` the pre-computation result to be used in the `afternm` function calls
@@ -94,7 +95,7 @@ Returns:
 
 ### crypto_box_afternm (msg, nonce, k)
 
-Encrypts a given a message m, using partial computed data. 
+Encrypts a given a message m, using partial computed data.
 
 Parameters:
 
@@ -102,25 +103,25 @@ Parameters:
   * `nonce` - buffer with crypto box nonce
   * `k` - buffer calculated by the [`crypto_box_beforenm`](#crypto_box_beforenm-pk-sk) function call
 
-Returns 
+Returns
 
   * ciphered text buffer
-  * `undefined` in case or error 
+  * `undefined` in case or error
 
 ### crypto_box_open_afternm (ctxt, nonce, k)
 
-Decrypts a ciphertext ctxt given the receivers private key, and senders public key. 
+Decrypts a ciphertext ctxt given the receivers private key, and senders public key.
 
 Parameters:
 
   * `ctxt` - buffer with cipher text
   * `nonce` - buffer with crypto box nonce
   * `k` - buffer calculated by the  [`crypto_box_beforenm`](#crypto_box_beforenm-pk-sk) function call
- 
-Returns 
+
+Returns
 
   * plain text buffer
-  * `undefined` in case or error 
+  * `undefined` in case or error
 
 ## Credits
 This document is based on [documentation](http://mob5.host.cs.st-andrews.ac.uk/html) written by Jan de Muijnck-Hughes.

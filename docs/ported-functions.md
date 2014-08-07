@@ -14,7 +14,7 @@ List of all functions ported by node-sodium
   * crypto_verify_16
   * crypto_verify_32
 
-## Random 
+## Random
   * randombytes_buf
   * randombytes_close
   * randombytes_stir
@@ -25,6 +25,10 @@ List of all functions ported by node-sodium
   * crypto_hash
   * crypto_hash_sha512
   * crypto_hash_sha256
+
+## PwHash
+  * crypto_pwhash_scryptsalsa208sha256
+  * crypto_pwhash_scryptsalsa208sha256_ll
 
 ## Auth
   * crypto_auth
