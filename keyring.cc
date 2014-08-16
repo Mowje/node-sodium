@@ -219,7 +219,7 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 	}
 
 	//BUILD_BUFFER(string((char*) cipher, message.length()).c_str());
-	if (args.Length() == 3){
+	if (!(args.Length() > 3 && args[3]->IsFunction())){
 		return scope.Close(cipherBuf->handle_);
 	} else {
 		BUILD_BUFFER_CHAR(result, (char*)cipher, messageLength + crypto_box_ZEROBYTES);
@@ -278,7 +278,7 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 
 
 	BUILD_BUFFER_CHAR(result, (char*)plaintext, cipherLength - crypto_box_ZEROBYTES);
-	if (args.Length() == 3){
+	if (!(args.Length() > 3 && args[3]->IsFunction())){
 		return scope.Close(result_buffer);
 	} else {
 		Local<Function> callback = Local<Function>::Cast(args[3]);
@@ -291,11 +291,11 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 
 /*
 * Sign a given message, using crypto_sign
-* Args: Buffer message, Function callback (optional)
+* Args: Buffer message, Function callback (optional), Boolean detachedSignature
 */
 Handle<Value> KeyRing::Sign(const Arguments& args){
 	PREPARE_FUNC_VARS();
-	MANDATORY_ARGS(1, "Mandatory args : message\nOptional args: callback");
+	MANDATORY_ARGS(1, "Mandatory args : message\nOptional args: callback, detachedSignature");
 	CHECK_KEYPAIR("ed25519");
 
 	Local<Value> messageVal = args[0]->ToObject();
@@ -303,11 +303,22 @@ Handle<Value> KeyRing::Sign(const Arguments& args){
 	const unsigned char* message = (unsigned char*) Buffer::Data(messageVal);
 	const size_t messageLength = Buffer::Length(messageVal);
 
-	Buffer* signatureBuf = Buffer::New(messageLength + crypto_sign_BYTES);
-	unsigned char* signature = (unsigned char*) Buffer::Data(signatureBuf);
-	unsigned long long signatureSize;
+	bool detachedSignature = false;
+	if (args.Length() > 2){
+		Local<Boolean> detachedSignatureVal = args[2]->ToBoolean();
+		detachedSignature = detachedSignatureVal->Value();
+	}
 
-	int signResult = crypto_sign(signature, &signatureSize, message, messageLength, instance->_privateKey);
+	unsigned long long signatureSize = (detachedSignature ? crypto_sign_BYTES : messageLength + crypto_sign_BYTES);
+	Buffer* signatureBuf = Buffer::New(signatureSize);
+	unsigned char* signature = (unsigned char*) Buffer::Data(signatureBuf);
+
+	int signResult;
+	if (detachedSignature){
+		signResult = crypto_sign_detached(signature, &signatureSize, message, messageLength, instance->_privateKey);
+	} else {
+		signResult = crypto_sign(signature, &signatureSize, message, messageLength, instance->_privateKey);
+	}
 	if (signResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while signing the message. Code : " << signResult << endl;
@@ -317,10 +328,10 @@ Handle<Value> KeyRing::Sign(const Arguments& args){
 
 	//BUILD_BUFFER(string((char*) signature, messageLength + crypto_sign_BYTES).c_str());
 
-	if (args.Length() == 1){
+	if (!(args.Length() > 1 && args[1]->IsFunction())){
 		return scope.Close(signatureBuf->handle_);
 	} else {
-		BUILD_BUFFER_CHAR(result, (char*) signature, messageLength + crypto_sign_BYTES);
+		BUILD_BUFFER_CHAR(result, (char*) signature, signatureSize);
 		Local<Function> callback = Local<Function>::Cast(args[1]);
 		const int argc = 1;
 		Local<Value> argv[argc] = { result_buffer };
@@ -345,7 +356,7 @@ Handle<Value> KeyRing::Agree(const Arguments& args){
 	unsigned char* sharedSecret = (unsigned char*) Buffer::Data(sharedSecretBuf);
 	crypto_scalarmult(sharedSecret, instance->_privateKey, counterpartPubKey);
 
-	if (args.Length() == 1){
+	if (!(args.Length() > 1 && args[1]->IsFunction())){
 		return scope.Close(sharedSecretBuf->handle_);
 	} else {
 		BUILD_BUFFER_CHAR(result, (char*) sharedSecret, crypto_scalarmult_BYTES);
@@ -366,7 +377,7 @@ Handle<Value> KeyRing::PublicKeyInfo(const Arguments& args){
 		return scope.Close(Undefined());
 	}
 	//Sync/async fork
-	if (args.Length() == 0){
+	if (!(args.Length() > 0 && args[0]->IsFunction())){
 		return scope.Close(instance->PPublicKeyInfo());
 	} else {
 		Local<Function> callback = Local<Function>::Cast(args[0]);
@@ -460,7 +471,7 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		} else saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey);
 		instance->_filename = filename;
 	}
-	if (args.Length() >= 3){ //Callback
+	if (args.Length() >= 3 && args[3]->IsFunction()){ //Callback
 		Local<Function> callback = Local<Function>::Cast(args[2]);
 		const unsigned argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
@@ -546,7 +557,7 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 	if (args.Length() == 1){
 		return scope.Close( instance->PPublicKeyInfo() );
 	} else {
-		if (args[1]->IsUndefined()) return scope.Close( instance->PPublicKeyInfo() );
+		if (!args[1]->IsFunction()) return scope.Close( instance->PPublicKeyInfo() );
 		Local<Function> callback = Local<Function>::Cast(args[1]);
 		const int argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
@@ -625,7 +636,7 @@ Handle<Value> KeyRing::Save(const Arguments& args){
 		}
 	}
 
-	if (args.Length() == 1 || (args.Length() > 1 && args[1]->IsUndefined())){
+	if (args.Length() == 1 || (args.Length() > 1 && !args[1]->IsFunction())){
 		return scope.Close(Undefined());
 	} else {
 		Local<Function> callback = Local<Function>::Cast(args[1]);
@@ -1012,7 +1023,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 	} else {
 		decodeKeyBuffer(keyStr, keyType, privateKey, publicKey);
 	}
-	
+
 }
 
 void KeyRing::decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey){
