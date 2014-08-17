@@ -31,6 +31,7 @@ if (fs.existsSync('./c25519-1.key') && fs.existsSync('./c25519-2.key')){
 }
 
 var message1 = 'Message1', message2 = 'Message2';
+var buf1 = new Buffer(message1), buf2 = new Buffer(message2);
 
 var testCurve25519 = function(callback){
 	if (v){
@@ -71,21 +72,35 @@ var testCurve25519 = function(callback){
 
 var testSignatures = function(callback){
 	if (v) console.log('Public key 1 : ' + JSON.stringify(pubKey1) + '\nPublic key 2 : ' + JSON.stringify(pubKey2));
-	var signature1 = keyring1.sign(new Buffer(message1));
-	var signature2 = keyring2.sign(new Buffer(message2));
+	var signature1 = keyring1.sign(buf1);
+	var signature2 = keyring2.sign(buf2);
 	if (v){
 		console.log('Signature 1 : ' + signature1.toString('hex'));
 		console.log('Signature 2 : ' + signature2.toString('hex'));
 	}
 
-	var isValid1 = sodium.api.crypto_sign_open(signature1, new Buffer(pubKey1.publicKey, 'hex'));
-	var isValid2 = sodium.api.crypto_sign_open(signature2, new Buffer(pubKey2.publicKey, 'hex'));
+	var pk1 = new Buffer(pubKey1.publicKey, 'hex'), pk2 = new Buffer(pubKey2.publicKey, 'hex');
+
+	var isValid1 = sodium.api.crypto_sign_open(signature1, pk1);
+	var isValid2 = sodium.api.crypto_sign_open(signature2, pk2);
 	if (v){
 		console.log('isValid1 : ' + isValid1.toString());
 		console.log('isValid2 : ' + isValid2.toString());
 	}
 	assert.equal(isValid1.toString(), message1, 'Signature 1 is invalid');
 	assert.equal(isValid2.toString(), message2, 'Signature 2 is invalid');
+
+	var signatureDetached1 = keyring1.sign(buf1, undefined, true);
+	var signatureDetached2 = keyring2.sign(buf2, undefined, true);
+	isValid1 = sodium.api.crypto_sign_verify_detached(signatureDetached1, buf1, pk1);
+	isValid2 = sodium.api.crypto_sign_verify_detached(signatureDetached2, buf2, pk2);
+	assert(isValid1, 'Detached signature 1 is invalid');
+	assert(isValid2, 'Detached signature 2 is invalid');
+
+	isValid1 = sodium.api.crypto_sign_verify_detached(signatureDetached1, buf2, pk1);
+	isValid2 = sodium.api.crypto_sign_verify_detached(signatureDetached2, buf1, pk2);
+	assert.equal(isValid1, false, 'Detached signature 1 shouldn\'t be valid for message 2');
+	assert.equal(isValid2, false, 'Detached signature 2 shouldn\'t be valid for message 1');
 
 	if (callback && typeof callback == 'function') callback();
 };

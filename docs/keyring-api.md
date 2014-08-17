@@ -83,9 +83,10 @@ Additionally :
 	* Buffer publicKey : the counterpart's public key, with whom you want to make the key curve25519 key exchange
 	* Function callback : Optional. Function that will be called once the shared secret has been calculated. Receives the shared secret as a `Buffer`
 	* Returns the shared secret as a `Buffer`, if no callback has been given
-* `KeyRing.sign(Buffer message, [Function callback])`
+* `KeyRing.sign(Buffer message, [Function callback], [Boolean detached])`
 	* Buffer message : the message to be signed
 	* Function callback : Optional. A function that will receive the signature as a `Buffer` once completed
+	* Boolean detached : Optional. Determines whether the signature isn't going to be detached from the signed message or not. Defaults to false.
 	* Returns the signature as a `Buffer`, if no callback has been given
 
 ## Key file format
