@@ -9,6 +9,7 @@ build
 html-report/
 lib-cov/
 node_modules/
+test-nw/node_modules/
 node-sodium.sublime-project
 node-sodium.sublime-workspace
 

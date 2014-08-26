@@ -76,7 +76,7 @@ Tested on Mac and Linux. However be sure to have installed automake and libtool 
 
 Or
 
-    npm install git+https://github.com:Mowje/node-sodium.git
+    npm install git+https://github.com/Mowje/node-sodium.git
 
 node-sodium depends on lib sodium, so if lib sodium does not compile on your platform chances are that process will fail.
 
@@ -116,6 +116,9 @@ This error might happen on your first call to node-sodium (whether it be from te
     export LD_RUN_PATH=$LD_RUN_PATH:$(pwd)/node_modules/sodium/libsodium/src/libsodium/.libs/
 
 This error has reportedly happened on different Linux distros after a successful compilation
+
+# Building for node-webkit
+It is possible to build this module for [node-webkit](https://github.com/rogerwang/node-webkit). As of now, the newest possible target is `0.8.4`, because newer versions of node-webkit use a currently unstable version of nodejs on which this module cannot build yet.
 
 # Code Samples
 Please check the fully documented code samples in `test/test_sodium.js`.

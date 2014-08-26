@@ -51,12 +51,35 @@ clean:
 	-rm -fr html-report
 	-rm -fr coverage
 	-rm -fr coverage.html
+	-rm -rf build/nw
+	-rm -rf build/buildbase
+	-rm -rf test-nw/node_modules
 
 sodium:
 	cd libsodium && \
 	./autogen.sh && \
-    ./configure && \
+	./configure && \
 	make && make check
 	node-gyp rebuild
+
+sodium-nw:
+	nw-gyp rebuild --target=0.8.4
+
+get-buildbase-osx:
+	mkdir -p build/buildbase/
+	wget http://dl.node-webkit.org/v0.8.4/node-webkit-v0.8.4-osx-ia32.zip -O build/buildbase/node-webkit-osx.zip
+	cd build/buildbase; \
+		mkdir osx; \
+		unzip node-webkit-osx.zip -d osx
+
+build-test-nw-osx: clean get-buildbase-osx
+	mkdir -p build/nw
+	mkdir -p test-nw/node_modules
+	cd test-nw/node_modules && npm install git+https://github.com/Mowje/node-sodium && \
+	cd sodium && nw-gyp rebuild --target=0.8.4
+	cd test-nw && zip -r ../build/nw/app.nw *
+	cd build/nw && cp -r ../buildbase/osx/node-webkit.app test-nw.app && \
+	cp app.nw test-nw.app/Contents/Resources/app.nw
+	
 
 .PHONY: test-cov site docs test docclean

@@ -1,0 +1,9 @@
+{
+	"name": "sodium-nw-test",
+	"main": "index.html",
+	"window": {
+		"toolbar": false,
+		"height": 600,
+		"width": 800
+	}
+}
