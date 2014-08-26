@@ -75,8 +75,10 @@ get-buildbase-osx:
 build-test-nw-osx: clean get-buildbase-osx
 	mkdir -p build/nw
 	mkdir -p test-nw/node_modules
-	cd test-nw/node_modules && npm install git+https://github.com/Mowje/node-sodium && \
-	cd sodium && nw-gyp rebuild --target=0.8.4
+	cd test-nw/node_modules && git clone https://github.com/Mowje/node-sodium.git sodium && \
+	cd sodium && git clone https://github.com/jedisct1/libsodium.git -b 0.6.1 libsodium && cd libsodium && \
+	./autogen.sh && ./configure --host=i386-apple-darwin --disable-shared --enable-static && make && cd .. && \
+	nw-gyp rebuild --target=0.8.4 --arch=i386
 	cd test-nw && zip -r ../build/nw/app.nw *
 	cd build/nw && cp -r ../buildbase/osx/node-webkit.app test-nw.app && \
 	cp app.nw test-nw.app/Contents/Resources/app.nw

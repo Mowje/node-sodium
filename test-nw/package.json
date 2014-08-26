@@ -2,7 +2,7 @@
 	"name": "sodium-nw-test",
 	"main": "index.html",
 	"window": {
-		"toolbar": false,
+		"toolbar": true,
 		"height": 600,
 		"width": 800
 	}

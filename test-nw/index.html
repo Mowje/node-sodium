@@ -5,16 +5,18 @@
 	<body>
 		<div id="testOutput"></div>
 		<script>
-			var sodium = require('sodium');
+			/*var sodium = require('sodium');
 
 			var keyRing = new sodium.KeyRing();
 			var pubKey;
+			console.log('KeyRing instanciated');
 
 			function testEd25519(callback){
 				try {
 					keyRing.clear();
 				} catch (e){}
 				pubKey = keyRing.createKeyPair('ed25519');
+				console.log('Ed25519 key pair generated');
 				var message1 = 'message1', message2 = 'message2';
 				var signature = keyRing.sign(message1);
 				var detachedSignature = keyRing.sign(message2);
@@ -22,6 +24,7 @@
 				var signedMessage = sodium.api.crypto_sign_open(signature, new Buffer(pubKey.publicKey, 'hex'));
 				var isValid2 = sodium.api.crypto_sign_verify_detached(detachedSignature, message2, new Buffer(pubKey.publicKey, 'hex'));
 
+				if (callback && typeof callback == 'function') callback();
 			}
 
 			function testCurve25519(callback){
@@ -37,7 +40,7 @@
 				otherKeyRing.clear();
 			}
 
-			testEd25519(testCurve25519);
+			testEd25519(testCurve25519);*/
 
 		</script>
 	</body>
