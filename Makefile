@@ -38,9 +38,7 @@ git-pull:
 
 git-getsodium:
 	rm -rf libsodium
-	git init
-	git submodule add https://github.com/jedisct1/libsodium.git
-	git submodule update
+	git clone https://github.com/jedisct1/libsodium.git libsodium; \
 	cd libsodium; \
 	git reset --hard dc1e4b468dfb18cb69ab284cbc362288a1ce8df1; \
 	git checkout -f dc1e4b468dfb18cb69ab284cbc362288a1ce8df1
