@@ -50,7 +50,7 @@ clean:
 	-rm -fr coverage
 	-rm -fr coverage.html
 	-rm -rf build/nw
-	-rm -rf build/buildbase
+	#-rm -rf build/buildbase
 	-rm -rf test-nw/node_modules
 
 sodium:
@@ -64,22 +64,35 @@ sodium-nw:
 	nw-gyp rebuild --target=0.8.4
 
 get-buildbase-osx:
-	mkdir -p build/buildbase/
-	wget http://dl.node-webkit.org/v0.8.4/node-webkit-v0.8.4-osx-ia32.zip -O build/buildbase/node-webkit-osx.zip
-	cd build/buildbase; \
-		mkdir osx; \
-		unzip node-webkit-osx.zip -d osx
+	if [ -d "./build/buildbase/osx/node-webkit.app" ]; \
+	then \
+		echo "Found node-webkit.app\n"; \
+	else \
+		mkdir -p build/buildbase/; \
+		wget http://dl.node-webkit.org/v0.8.6/node-webkit-v0.8.6-osx-ia32.zip -O build/buildbase/node-webkit-osx.zip; \
+		cd build/buildbase && \
+		mkdir osx && \
+		unzip node-webkit-osx.zip -d osx; \
+	fi ; \
+
+package-nw:
+	cd test-nw && zip -r ../build/nw/app.nw *
+	if [ -d "./build/nw/test-nw.app" ]; \
+	then \
+		rm -r build/nw/test-nw.app; \
+	fi; \
+	cd build/nw && cp -r ../buildbase/osx/node-webkit.app test-nw.app && \
+	cp app.nw test-nw.app/Contents/Resources/app.nw
 
 build-test-nw-osx: clean get-buildbase-osx
 	mkdir -p build/nw
 	mkdir -p test-nw/node_modules
 	cd test-nw/node_modules && git clone https://github.com/Mowje/node-sodium.git sodium && \
-	cd sodium && git clone https://github.com/jedisct1/libsodium.git -b 0.6.1 libsodium && cd libsodium && \
-	./autogen.sh && ./configure --host=i386-apple-darwin --disable-shared --enable-static && make && cd .. && \
-	nw-gyp rebuild --target=0.8.4 --arch=i386
-	cd test-nw && zip -r ../build/nw/app.nw *
-	cd build/nw && cp -r ../buildbase/osx/node-webkit.app test-nw.app && \
-	cp app.nw test-nw.app/Contents/Resources/app.nw
+	cd sodium && npm install should && git clone https://github.com/jedisct1/libsodium.git -b 0.6.1 libsodium && cd libsodium && \
+	export CFLAGS="-arch i386" && \
+	./autogen.sh && ./configure && make && cd .. && \
+	nw-gyp rebuild --target=0.8.6 --arch=i386
+	make package-nw
 	
 
 .PHONY: test-cov site docs test docclean

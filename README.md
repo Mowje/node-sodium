@@ -118,9 +118,9 @@ This error might happen on your first call to node-sodium (whether it be from te
 This error has reportedly happened on different Linux distros after a successful compilation
 
 # Building for node-webkit
-I'm currently looking at how I can build node-sodium for usage within node-webkit.
+It is possible to build this module for [node-webkit](https://github.com/rogerwang/node-webkit). As of now, the newest possible target is `0.8.6`, because newer versions of node-webkit use a currently unstable version of nodejs on which the current code cannot build yet.
 
-~~It is possible to build this module for [node-webkit](https://github.com/rogerwang/node-webkit). As of now, the newest possible target is `0.8.4`, because newer versions of node-webkit use a currently unstable version of nodejs on which this module cannot build yet.~~
+On OSX, you can build an example app by calling `make build-test-nw-osx`; you'll find the resulting app in `build/nw/`
 
 # Code Samples
 Please check the fully documented code samples in `test/test_sodium.js`.
