@@ -15,6 +15,7 @@
 #include <cstring>
 #include <string>
 #include <sstream>
+#include <fstream>
 
 #include "sodium.h"
 
@@ -479,6 +480,287 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256_ll(const Arguments& args){
         return scope.Close(Undefined());
     }
     return scope.Close(key_handle);
+
+}
+
+/**
+ * Password based file encryption with ease of use. scrypt + secretbox. Same format as for encrypted key files produced by KeyRing.save
+ * Buffer fileContent
+ * Buffer password
+ * String filename
+ * Function callback
+ *
+ */
+Handle<Value> pw_file_encrypt(const Arguments& args){
+    HandleScope scope;
+    Local<Object> globalObj = Context::GetCurrent()->Global();
+
+    NUMBER_OF_MANDATORY_ARGS(3, "arguments fileContent, password and filename can't be null");
+
+    if (args.Length() > 3){
+        if (!args[3]->IsFunction()){
+            ThrowException(Exception::TypeError(String::New("When defined, callback must be a function")));
+            return scope.Close(Undefined());
+        }
+    }
+
+    GET_ARG_AS_UCHAR(0, fileContent);
+    GET_ARG_AS_UCHAR(1, password);
+    GET_ARG_AS_UCHAR(2, filenameBuffer);
+
+    //std::string filename((char*)filenameBuffer, filenameBuffer_size);
+    unsigned int r = 8;
+    unsigned int p = 1;
+    unsigned long long opsLimit = 16384;
+    unsigned short saltSize = 8;
+    unsigned short nonceSize = crypto_secretbox_NONCEBYTES;
+
+    std::fstream fileWriter((char*)filenameBuffer, std::ios::out | std::ios::trunc);
+
+    //Writing r
+    fileWriter << (unsigned char) (r >> 8);
+    fileWriter << (unsigned char) r;
+    //Writing p
+    fileWriter << (unsigned char) (p >> 8);
+    fileWriter << (unsigned char) p;
+    //Writing opsLimit
+    for (unsigned short i = 8; i > 0; i--){
+        fileWriter << (unsigned char) (opsLimit >> (8 * (i - 1)));
+    }
+    //Writing saltSize
+    fileWriter << (unsigned char) (saltSize >> 8);
+    fileWriter << (unsigned char) saltSize;
+    //Writing nonceSize
+    fileWriter << (unsigned char) (nonceSize >> 8);
+    fileWriter << (unsigned char) nonceSize;
+    //Writing content size
+    unsigned int contentBufferSize = fileContent_size + crypto_secretbox_MACBYTES;
+    for (unsigned short i = 4; i > 0; i--){
+        fileWriter << (unsigned char) (contentBufferSize >> (8 * (i - 1)));
+    }
+    //Generate salt and write it
+    unsigned char* salt = new unsigned char[saltSize];
+    randombytes_buf(salt, saltSize);
+    for (unsigned short i = 0; i < saltSize; i++) fileWriter << ((unsigned char) salt[i]);
+    //Generate nonce and write it
+    unsigned char* nonce = new unsigned char[nonceSize];
+    randombytes_buf(nonce, nonceSize);
+    for (unsigned short i = 0; i < nonceSize; i++) fileWriter << ((unsigned char) nonce[i]);
+    //Derive password into key
+    unsigned short derivedKeySize = crypto_secretbox_KEYBYTES;
+    unsigned char* derivedKey = new unsigned char[derivedKeySize];
+    crypto_pwhash_scryptsalsa208sha256_ll(password, password_size, salt, saltSize, opsLimit, r, p, derivedKey, derivedKeySize);
+
+    //Encrypt fileContent and write it
+    unsigned char* encryptedContent = new unsigned char[contentBufferSize];
+    crypto_secretbox_easy(encryptedContent, fileContent, fileContent_size, nonce, derivedKey);
+    for (unsigned long i = 0; i < contentBufferSize; i++){
+        fileWriter << ((unsigned char) encryptedContent[i]);
+    }
+
+    //Close and clean up
+    fileWriter.close();
+
+    sodium_memzero(salt, saltSize);
+    sodium_memzero(nonce, nonceSize);
+    sodium_memzero(derivedKey, derivedKeySize);
+    sodium_memzero(encryptedContent, contentBufferSize);
+
+    delete salt;
+    delete nonce;
+    delete derivedKey;
+    delete encryptedContent;
+
+    salt = 0;
+    nonce = 0;
+    derivedKey = 0;
+    encryptedContent = 0;
+
+    //Either callback or return undefined
+    if (args.Length() > 3){
+        Local<Function> callback = Local<Function>::Cast(args[3]);
+        const int argc = 0;
+        Local<Value> argv[argc];
+        callback->Call(globalObj, argc, argv);
+    }
+    return scope.Close(Undefined());
+}
+
+/**
+ * Password based file decryption with ease of use. scrypt + secretbox. Same format as for encrypted key files produced by KeyRing.save
+ * String filename
+ * Buffer password
+ * Function callback
+ *
+ */
+Handle<Value> pw_file_decrypt(const Arguments& args){
+    HandleScope scope;
+    Local<Object> globalObj = Context::GetCurrent()->Global();
+
+    Local<Value> err;
+    const int argc = 2;
+
+    NUMBER_OF_MANDATORY_ARGS(2, "arguments filename and password must be defined");
+
+    if (args.Length() > 2){
+        if (!args[2]->IsFunction()){
+            ThrowException(Exception::TypeError(String::New("When defined, callback must be a function")));
+            return scope.Close(Undefined());
+        }
+    }
+
+    GET_ARG_AS_UCHAR(0, filename);
+    GET_ARG_AS_UCHAR(1, password);
+
+    std::fstream fileReader((char*) filename, std::ios::in);
+    std::string fileString = "";
+    std::filebuf* fileBuffer = fileReader.rdbuf();
+    while (fileBuffer->in_avail() > 0){
+        fileString += (char) fileBuffer->sbumpc();
+    }
+    fileReader.close();
+
+    std::stringstream fileStringStream(fileString);
+    std::stringbuf* buf = fileStringStream.rdbuf();
+
+    /* Encrypted file format. Numbers are in big endian
+    * 2 bytes : r (unsigned short)
+    * 2 bytes : p (unsigned short)
+    * 8 bytes : opsLimit (unsigned long)
+    * 2 bytes: salt size (sn, unsigned short)
+    * 2 bytes : nonce size (ss, unsigned short)
+    * 4 bytes : key buffer size (x, unsigned long)
+    * sn bytes: salt
+    * ss bytes : nonce
+    * x bytes : encrypted key buffer
+    */
+
+    //Variable that will be used to check the size of the file; that it corresponds to what the file is supposed to contain.
+    //With this technique, trying to avoid buffer overflows and potential RCEs that might come with them
+    unsigned short minRemainingSize = 20; //16 bytes from the above description + 4 bytes of the MAC of the encrypted key buffer
+    const unsigned long opsLimitBeforeException = 4194304;
+
+    if (buf->in_avail() < minRemainingSize){
+        ThrowException(Exception::RangeError(String::New("Invalid file format")));
+        return scope.Close(Undefined());
+    }
+
+    //Reading r
+    unsigned short r;
+    r = ((unsigned short) buf->sbumpc()) << 8;
+    r += (unsigned short) buf->sbumpc();
+    minRemainingSize -= 2;
+
+    //Reading p
+    unsigned short p;
+    p = ((unsigned short) buf->sbumpc()) << 8;
+    p += (unsigned short) buf->sbumpc();
+    minRemainingSize -= 2;
+
+    //Reading opsLimit
+    unsigned long long opsLimit = 0;
+    for (int i = 7; i >= 0; i++){
+        opsLimit += ((unsigned long long) buf->sbumpc()) << (8 * i);
+    }
+    minRemainingSize -= 8;
+
+    if (opsLimit > opsLimitBeforeException){
+        ThrowException(Exception::RangeError(String::New("Encrypted key file asks from more scrypt iterations than is allowed")));
+        return scope.Close(Undefined());
+    }
+
+    //Reading salt size
+    unsigned short saltSize;
+    saltSize = ((unsigned short) buf->sbumpc()) << 8;
+    saltSize += (unsigned short) buf->sbumpc();
+    minRemainingSize -= 2;
+    minRemainingSize += saltSize;
+
+    //Reading nonce size
+    unsigned short nonceSize;
+    nonceSize = ((unsigned short) buf->sbumpc()) << 8;
+    nonceSize += (unsigned short) buf->sbumpc();
+    minRemainingSize -= 2;
+    minRemainingSize += nonceSize;
+
+    if (buf->in_avail() < minRemainingSize){
+        ThrowException(Exception::RangeError(String::New("Invalid encrypted file format")));
+        return scope.Close(Undefined());
+    }
+
+    if (nonceSize != crypto_secretbox_NONCEBYTES){
+        ThrowException(Exception::RangeError(String::New("Invalid nonce size")));
+        return scope.Close(Undefined());
+    }
+
+    //Reading the supposed encrypted content length and check its validity
+    unsigned int encryptedContentSize = 0;
+    for (int i = 3; i >= 0; i--){
+        encryptedContentSize += ((unsigned int) buf->sbumpc()) << (8 * i);
+    }
+    minRemainingSize -= 4;
+    minRemainingSize += encryptedContentSize;
+
+    if (buf->in_avail() < minRemainingSize){
+        ThrowException(Exception::RangeError(String::New("Invalid encrypted file format")));
+        return scope.Close(Undefined());
+    }
+
+    //Reading salt
+    unsigned char* salt = new unsigned char[saltSize];
+    for (int i = 0; i < saltSize; i++){
+        salt[i] = (unsigned char) buf->sbumpc();
+    }
+    minRemainingSize -= saltSize;
+
+    //Reading nonce
+    unsigned char* nonce = new unsigned char[nonceSize];
+    for (int i = 0; i < nonceSize; i++){
+        nonce[i] = (unsigned char) buf->sbumpc();
+    }
+    minRemainingSize -= nonceSize;
+
+    //Length of the remaining data has already been checked before
+    unsigned int encryptedContentLength = buf->in_avail();
+    unsigned char* encryptedContent = new unsigned char[encryptedContentLength];
+    for (unsigned long i = 0; i < encryptedContentSize; i++){
+        encryptedContent[i] = (unsigned char) buf->sbumpc();
+    }
+    minRemainingSize -= encryptedContentSize;
+
+    unsigned short keySize = 32;
+    unsigned char* derivedKey = new unsigned char[keySize];
+
+    crypto_pwhash_scryptsalsa208sha256_ll(password, password_size, salt, saltSize, opsLimit, r, p, derivedKey, keySize);
+
+    unsigned int plaintextLength = encryptedContentSize - crypto_secretbox_MACBYTES;
+    NEW_BUFFER_AND_PTR(plaintext, plaintextLength);
+    //unsigned char* plaintext = new unsigned char[plaintextLength];
+
+    if (crypto_secretbox_open_easy(plaintext_ptr, encryptedContent, encryptedContentSize, nonce, derivedKey) != 0){
+        ThrowException(Exception::Error(String::New("Invalid password or corrupted file")));
+        return scope.Close(Undefined());
+    }
+
+    //Memory clean up
+    sodium_memzero(salt, saltSize);
+    sodium_memzero(nonce, nonceSize);
+    sodium_memzero(derivedKey, keySize);
+
+    delete salt;
+    delete nonce;
+    delete derivedKey;
+
+    salt = 0;
+    nonce = 0;
+    derivedKey = 0;
+
+    /*if (args.Length() > 2){ //Callback has been provided
+        Local<Function> callback = Local<Function>::Cast(args[2]);
+        Local<Value> argv[argc] = {Undefined(), Local<Value>::New(plaintext->handle_)};
+        callback->Call(globalObj, argc, argv);
+        return scope.Close(Undefined());
+    } else*/ return scope.Close(plaintext_handle);
 
 }
 
@@ -1400,6 +1682,10 @@ void RegisterModule(Handle<Object> target) {
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE);
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_SENSITIVE);
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE);
+
+    // Password-based file encryption
+    NODE_SET_METHOD(target, "encrypt_file", pw_file_encrypt);
+    NODE_SET_METHOD(target, "decrypt_file", pw_file_decrypt);
 
     // Auth
     NEW_METHOD(crypto_auth);

@@ -3,7 +3,6 @@
 #include <iostream>
 
 #include <string>
-#include <map>
 #include <exception>
 #include <stdexcept>
 #include <fstream>
@@ -849,7 +848,7 @@ void KeyRing::saveKeyPair(string const& filename, string const& keyType, const u
 		fileWriter << (unsigned char) (nonceSize >> 8);
 		fileWriter << (unsigned char) nonceSize;
 		//Write keyBufferSize (4bytes)
-		unsigned short keyBufferSize = keyBufferStr.length() + crypto_secretbox_MACBYTES;
+		unsigned int keyBufferSize = keyBufferStr.length() + crypto_secretbox_MACBYTES;
 		//cout << "Encrypted buffer size: " << keyBufferSize << endl;
 		for (unsigned short i = 4; i > 0; i--){
 			fileWriter << (unsigned char) (keyBufferSize >> (8 * (i - 1)));
@@ -983,9 +982,9 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		}
 
 		//Reading encrypted key buffer size
-		unsigned long keyBufferSize = 0;
+		unsigned int keyBufferSize = 0;
 		for (int i = 3; i >= 0; i--){
-			keyBufferSize += ((unsigned long) buf->sbumpc()) << (8 * i);
+			keyBufferSize += ((unsigned int) buf->sbumpc()) << (8 * i);
 			//cout << "I : " << i << endl;
 		}
 		minRemainingSize -= 4;
@@ -1005,6 +1004,7 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 		}
 		minRemainingSize -= nonceSize;
 
+		//Length of the remaining data has already been checked before
 		unsigned int encryptedKeyLength = buf->in_avail();
 		unsigned char* encryptedKey = new unsigned char[encryptedKeyLength];
 		for (unsigned long i = 0; i < keyBufferSize; i++){
@@ -1028,11 +1028,19 @@ void KeyRing::loadKeyPair(string const& filename, string* keyType, unsigned char
 
 		decodeKeyBuffer(string((char*) keyPlainText, keyPlainTextLength), keyType, privateKey, publicKey);
 
+		sodium_memzero(salt, saltSize);
+		sodium_memzero(nonce, nonceSize);
+		sodium_memzero(encryptedKey, encryptedKeyLength);
+		sodium_memzero(derivedKey, keySize);
+		sodium_memzero(keyPlainText, keyPlainTextLength);
+
 		delete salt;
 		delete nonce;
 		delete encryptedKey;
 		delete derivedKey;
 		delete keyPlainText;
+
+		salt = 0, nonce = 0, encryptedKey = 0, derivedKey = 0, keyPlainText = 0;
 
 	} else {
 		decodeKeyBuffer(keyStr, keyType, privateKey, publicKey);
@@ -1102,7 +1110,6 @@ void KeyRing::decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType
 			privateKey[i] = buffer->sbumpc();
 		}
 
-		//Building keypair map
 		*keyType = "curve25519";
 	} else if (_keyType == 0x06){ //Ed25519
 		//Getting public key length
@@ -1139,7 +1146,6 @@ void KeyRing::decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType
 			privateKey[i] = buffer->sbumpc();
 		}
 
-		//Building keypair map
 		*keyType = "ed25519";
 	}
 	if (buffer->in_avail() > 0) cout << "Key buffer loaded. However there are some \"left over bytes\"" << endl;
