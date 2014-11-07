@@ -67,6 +67,8 @@ Additionally :
 	* Returns `Buffer` containing the encoded key pair
 * `KeyRing.setKeyBuffer(Buffer keyBuffer)`
 	Sets the key pair of the keypair by loading its encoded buffer. For security reasons we advise you NOT TO USE this method for long-term key handling, especially not in server apps. If you don't know what I'm talking about, it's one more reason not to use this method at all.
+* `KeyRing.lockKeyBuffer()`
+	Prevents the `getKeyBuffer()` method from being used on the current `KeyRing` instance. To be used when it is certain that you will not use `getKeyBuffer` on the current KeyRing, to prevent potential malicious code from dumping the key
 * `KeyRing.encrypt(Buffer message, Buffer publicKey, Buffer nonce, [Function callback])`
 	* Buffer message : the message to encrypt
 	* Buffer publicKey : the receiver's public key

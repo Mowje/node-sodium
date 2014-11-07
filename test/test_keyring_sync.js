@@ -118,6 +118,9 @@ var testKeyBuffers = function(callback){
 	assert(keyring1.publicKeyInfo().publicKey == publicKey2.publicKey, 'Invalid key in keyring1, through keyBuffer methods');
 	assert(keyring2.publicKeyInfo().publicKey == publicKey1.publicKey, 'Invalud key in keyring2, through keyBuffer methods');
 
+	keyring1.lockKeyBuffer();
+	assert(typeof keyring1.getKeyBuffer() == 'undefined', 'Error while locking the key ring');
+
 	if (callback && typeof callback == 'function') callback();
 };
 

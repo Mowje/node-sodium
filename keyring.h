@@ -20,6 +20,7 @@ private:
 	unsigned char* _privateKey;
 	unsigned char* _publicKey;
 	std::string _keyType;
+	bool _keyLock;
 	/*
 	* Internal methods
 	*/
@@ -53,6 +54,7 @@ private:
 	static v8::Handle<v8::Value> Clear(const v8::Arguments& args);
 	static v8::Handle<v8::Value> SetKeyBuffer(const v8::Arguments& args);
 	static v8::Handle<v8::Value> GetKeyBuffer(const v8::Arguments& args);
+	static v8::Handle<v8::Value> LockKeyBuffer(const v8::Arguments& args);
 	static v8::Persistent<v8::Function> constructor;
 };
 

@@ -68,6 +68,7 @@ using namespace std;
 Persistent<Function> KeyRing::constructor;
 
 KeyRing::KeyRing(string const& filename, unsigned char* password, size_t passwordSize) : _filename(filename), _privateKey(0), _publicKey(0){
+	_keyLock = false;
 	if (filename != ""){
 		if (!doesFileExist(filename)){
 			//Throw a V8 exception??
@@ -106,6 +107,7 @@ void KeyRing::Init(Handle<Object> exports){
 	BIND_METHOD("clear", Clear);
 	BIND_METHOD("setKeyBuffer", SetKeyBuffer);
 	BIND_METHOD("getKeyBuffer", GetKeyBuffer);
+	BIND_METHOD("lockKeyBuffer", LockKeyBuffer);
 
 	constructor = Persistent<Function>::New(tpl->GetFunction());
 	exports->Set(String::NewSymbol("KeyRing"), constructor);
@@ -740,6 +742,10 @@ Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
 Handle<Value> KeyRing::GetKeyBuffer(const Arguments& args){
 	PREPARE_FUNC_VARS();
 
+	if (instance->_keyLock){
+		return scope.Close(Undefined());
+	}
+
 	if (!(instance->_privateKey != 0 && instance->_publicKey != 0)){
 		return scope.Close(Undefined());
 	}
@@ -749,6 +755,14 @@ Handle<Value> KeyRing::GetKeyBuffer(const Arguments& args){
 	return scope.Close(keybuf_buffer);
 
 	//return scope.Close(String::New(keyBuffer.c_str(), keyBuffer.length()));
+}
+
+Handle<Value> KeyRing::LockKeyBuffer(const Arguments& args){
+	HandleScope scope;
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+
+	instance->_keyLock = true;
+	return scope.Close(Undefined());
 }
 
 string KeyRing::strToHex(string const& s){
