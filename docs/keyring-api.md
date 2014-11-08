@@ -26,8 +26,9 @@ Don't forget to call the `clear` method once you're done using the keypair loade
 Also, when you want to skip an optional parameter but want to define an other parameter that follows it, you must set the first one to `undefined`. Sorry for the inconvenience.
 
 Additionally :
-* `encrypt`, `decrypt`, `agree` can be called when the loaded key pair is a Curve25519 one. `sign` can be called when the loaded key pair is a Ed25519 one. In case it's not respected, an exception will be thrown.
-* Aside the `clear` method, all instance methods will throw an exception if no key is loaded in the keyring
+* Since v1.1.2, libsodium v1.0.0 is used as base for this module; that version added ed25519->curve25519 key conversion. As a result, you can now use `encrypt`, `decrypt` and `agree` when an Ed25519 key is loaded. An additional `curvePublicKey` has been added to the "public key object" returned by the keyring, independent from what type of key is loaded. It's the curve25519 public key of the current key pair.
+* ~~`encrypt`, `decrypt`, `agree` can be called when the loaded key pair is a Curve25519 one. `sign` can only be called when the loaded key pair is a Ed25519 one. In case it's not respected, an exception will be thrown.~~
+* Aside the `clear` and `lockKeyBuffer` method, all instance methods will throw an exception if no key is loaded in the keyring
 
 ----------------------
 
