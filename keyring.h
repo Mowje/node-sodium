@@ -2,7 +2,6 @@
 #define KEYRING_H
 
 #include <string>
-#include <map>
 
 #include <node.h>
 
@@ -15,7 +14,6 @@ private:
 	explicit KeyRing(std::string const& filename = "", unsigned char* password = 0, size_t passwordSize = 0);
 	~KeyRing();
 	//Internal attributes
-	//std::map<std::string, std::string>* keyPair;
 	std::string _filename;
 	unsigned char* _privateKey;
 	unsigned char* _publicKey;
@@ -26,7 +24,6 @@ private:
 	*/
 	static std::string strToHex(std::string const& s);
 	static std::string hexToStr(std::string const& s);
-	//static std::map<std::string, std::string>* edwardsToMontgomery(std::map<std::string, std::string>* edwards);
 
 	//File methods
 	static void loadKeyPair(std::string const& filename, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey, const unsigned char* password = 0, const size_t passwordSize = 0, unsigned long opsLimitBeforeException = 4194304);

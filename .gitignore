@@ -19,3 +19,5 @@ npm-debug.log
 /*.key
 */*.key
 *.key
+*.enc
+*/*.enc

@@ -16,6 +16,7 @@
 #include <string>
 #include <sstream>
 #include <fstream>
+#include <iostream>
 
 #include "sodium.h"
 
@@ -487,7 +488,7 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256_ll(const Arguments& args){
  * Password based file encryption with ease of use. scrypt + secretbox. Same format as for encrypted key files produced by KeyRing.save
  * Buffer fileContent
  * Buffer password
- * String filename
+ * String filename //Transform it back into a string
  * Function callback
  *
  */
@@ -506,7 +507,8 @@ Handle<Value> pw_file_encrypt(const Arguments& args){
 
     GET_ARG_AS_UCHAR(0, fileContent);
     GET_ARG_AS_UCHAR(1, password);
-    GET_ARG_AS_UCHAR(2, filenameBuffer);
+    String::Utf8Value filenameVal(args[2]);
+    std::string filename(*filenameVal);
 
     //std::string filename((char*)filenameBuffer, filenameBuffer_size);
     unsigned int r = 8;
@@ -515,7 +517,7 @@ Handle<Value> pw_file_encrypt(const Arguments& args){
     unsigned short saltSize = 8;
     unsigned short nonceSize = crypto_secretbox_NONCEBYTES;
 
-    std::fstream fileWriter((char*)filenameBuffer, std::ios::out | std::ios::trunc);
+    std::fstream fileWriter(filename.c_str(), std::ios::out | std::ios::trunc);
 
     //Writing r
     fileWriter << (unsigned char) (r >> 8);
@@ -609,10 +611,12 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
         }
     }
 
-    GET_ARG_AS_UCHAR(0, filename);
+    //GET_ARG_AS_UCHAR(0, filename);
+    String::Utf8Value filenameVal(args[0]);
+    std::string filename(*filenameVal);
     GET_ARG_AS_UCHAR(1, password);
 
-    std::fstream fileReader((char*) filename, std::ios::in);
+    std::fstream fileReader(filename.c_str(), std::ios::in);
     std::string fileString = "";
     std::filebuf* fileBuffer = fileReader.rdbuf();
     while (fileBuffer->in_avail() > 0){
@@ -659,7 +663,7 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
 
     //Reading opsLimit
     unsigned long long opsLimit = 0;
-    for (int i = 7; i >= 0; i++){
+    for (int i = 7; i >= 0; i--){
         opsLimit += ((unsigned long long) buf->sbumpc()) << (8 * i);
     }
     minRemainingSize -= 8;
@@ -720,6 +724,7 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
     }
     minRemainingSize -= nonceSize;
 
+    //Reading encrypted content
     //Length of the remaining data has already been checked before
     unsigned int encryptedContentLength = buf->in_avail();
     unsigned char* encryptedContent = new unsigned char[encryptedContentLength];
@@ -731,12 +736,14 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
     unsigned short keySize = 32;
     unsigned char* derivedKey = new unsigned char[keySize];
 
+    //Deriving the password
     crypto_pwhash_scryptsalsa208sha256_ll(password, password_size, salt, saltSize, opsLimit, r, p, derivedKey, keySize);
 
     unsigned int plaintextLength = encryptedContentSize - crypto_secretbox_MACBYTES;
     NEW_BUFFER_AND_PTR(plaintext, plaintextLength);
     //unsigned char* plaintext = new unsigned char[plaintextLength];
 
+    //Decryption
     if (crypto_secretbox_open_easy(plaintext_ptr, encryptedContent, encryptedContentSize, nonce, derivedKey) != 0){
         ThrowException(Exception::Error(String::New("Invalid password or corrupted file")));
         return scope.Close(Undefined());
