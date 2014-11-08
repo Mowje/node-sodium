@@ -597,10 +597,10 @@ Handle<Value> pw_file_encrypt(const Arguments& args){
  */
 Handle<Value> pw_file_decrypt(const Arguments& args){
     HandleScope scope;
-    Local<Object> globalObj = Context::GetCurrent()->Global();
+    //Local<Object> globalObj = Context::GetCurrent()->Global();
 
-    Local<Value> err;
-    const int argc = 2;
+    //Local<Value> err;
+    //const int argc = 2;
 
     NUMBER_OF_MANDATORY_ARGS(2, "arguments filename and password must be defined");
 

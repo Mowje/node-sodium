@@ -17,6 +17,8 @@ private:
 	std::string _filename;
 	unsigned char* _privateKey;
 	unsigned char* _publicKey;
+	unsigned char* _altPrivateKey;
+	unsigned char* _altPublicKey;
 	std::string _keyType;
 	bool _keyLock;
 	/*
@@ -31,6 +33,7 @@ private:
 	static bool doesFileExist(std::string const& filename);
 	static void decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType, unsigned char* privateKey, unsigned char* publicKey);
 	static std::string encodeKeyBuffer(std::string const& keyType, const unsigned char* privateKey, const unsigned char* publicKey);
+	static void deriveAltKeys(unsigned char* edPub, unsigned char* edSec, unsigned char* cPub, unsigned char* cSec); //Called whenever an Ed25519 key is loaded/generated. Used to calculate the Curve25519 version of it and put in memory
 
 	//private PubKeyInfo object constructor
 	v8::Local<v8::Object> PPublicKeyInfo();

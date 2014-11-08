@@ -40,8 +40,8 @@ git-getsodium:
 	rm -rf libsodium
 	git clone https://github.com/jedisct1/libsodium.git libsodium; \
 	cd libsodium; \
-	git reset --hard dc1e4b468dfb18cb69ab284cbc362288a1ce8df1; \
-	git checkout -f dc1e4b468dfb18cb69ab284cbc362288a1ce8df1
+	git reset --hard b91baa687ed4f219a2ee63815c625221fe05420a; \
+	git checkout -f b91baa687ed4f219a2ee63815c625221fe05420a
 
 clean:
 	-rm -fr lib-cov

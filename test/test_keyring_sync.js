@@ -134,6 +134,7 @@ testCurve25519(function(){
 		keyring1.save('./ed25519-1.key');
 		keyring2.save('./ed25519-2.key');
 	}
+	if (v) console.log('Generate/load/save keys is working');
 
 	testSignatures(function(){
 		//key saving and loading

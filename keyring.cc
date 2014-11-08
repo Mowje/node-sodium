@@ -66,7 +66,7 @@ using namespace std;
 
 Persistent<Function> KeyRing::constructor;
 
-KeyRing::KeyRing(string const& filename, unsigned char* password, size_t passwordSize) : _filename(filename), _privateKey(0), _publicKey(0){
+KeyRing::KeyRing(string const& filename, unsigned char* password, size_t passwordSize) : _filename(filename), _privateKey(0), _publicKey(0), _altPrivateKey(0), _altPublicKey(0){
 	_keyLock = false;
 	if (filename != ""){
 		if (!doesFileExist(filename)){
@@ -176,7 +176,7 @@ Handle<Value> KeyRing::New(const Arguments& args){
 Handle<Value> KeyRing::Encrypt(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(3, "Mandatory args : message, counterpartPubKey, nonce\nOptional args: callback");
-	CHECK_KEYPAIR("curve25519");
+	//CHECK_KEYPAIR("curve25519");
 
 	Local<Object> messageVal = args[0]->ToObject();
 	Local<Object> publicKeyVal = args[1]->ToObject();
@@ -211,7 +211,12 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 	Buffer* cipherBuf = Buffer::New(messageLength + crypto_box_ZEROBYTES);
 	unsigned char* cipher = (unsigned char*)Buffer::Data(cipherBuf);
 
-	int boxResult = crypto_box(cipher, paddedMessage, messageLength + crypto_box_ZEROBYTES, nonce, publicKey, instance->_privateKey);
+	int boxResult;
+	if (instance->_keyType == "curve25519"){
+		boxResult = crypto_box(cipher, paddedMessage, messageLength + crypto_box_ZEROBYTES, nonce, publicKey, instance->_privateKey);
+	} else {
+		boxResult = crypto_box(cipher, paddedMessage, messageLength + crypto_box_ZEROBYTES, nonce, publicKey, instance->_altPrivateKey);
+	}
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while encrypting message. Error code : " << boxResult;
@@ -239,7 +244,7 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 Handle<Value> KeyRing::Decrypt(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(3, "Mandatory args : cipher, counterpartPubKey, nonce\nOptional args: callback");
-	CHECK_KEYPAIR("curve25519");
+	//CHECK_KEYPAIR("curve25519");
 
 	Local<Object> cipherVal = args[0]->ToObject();
 	Local<Object> publicKeyVal = args[1]->ToObject();
@@ -266,7 +271,12 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 
 	unsigned char* message = new unsigned char[cipherLength];
 
-	int boxResult = crypto_box_open(message, cipher, cipherLength, nonce, publicKey, instance->_privateKey);
+	int boxResult;
+	if (instance->_keyType == "curve25519"){
+		boxResult = crypto_box_open(message, cipher, cipherLength, nonce, publicKey, instance->_privateKey);
+	} else {
+		boxResult = crypto_box_open(message, cipher, cipherLength, nonce, publicKey, instance->_altPrivateKey);
+	}
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while decrypting message. Error code : " << boxResult;
@@ -348,14 +358,18 @@ Handle<Value> KeyRing::Sign(const Arguments& args){
 Handle<Value> KeyRing::Agree(const Arguments& args){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : counterpartPubKey\nOptional: callback");
-	CHECK_KEYPAIR("curve25519");
+	//CHECK_KEYPAIR("curve25519");
 
 	Local<Object> publicKeyVal = args[0]->ToObject();
 	const unsigned char* counterpartPubKey = (unsigned char*) Buffer::Data(publicKeyVal);
 
 	Buffer* sharedSecretBuf = Buffer::New(crypto_scalarmult_BYTES);
 	unsigned char* sharedSecret = (unsigned char*) Buffer::Data(sharedSecretBuf);
-	crypto_scalarmult(sharedSecret, instance->_privateKey, counterpartPubKey);
+	if (instance->_keyType == "curve25519"){
+		crypto_scalarmult(sharedSecret, instance->_privateKey, counterpartPubKey);
+	} else {
+		crypto_scalarmult(sharedSecret, instance->_altPrivateKey, counterpartPubKey);
+	}
 
 	if (!(args.Length() > 1 && args[1]->IsFunction())){
 		return scope.Close(sharedSecretBuf->handle_);
@@ -398,6 +412,12 @@ Local<Object> KeyRing::PPublicKeyInfo(){
 	string publicKey = strToHex(string((char*) _publicKey, ((_keyType == "ed25519") ? crypto_sign_PUBLICKEYBYTES : crypto_box_PUBLICKEYBYTES)));
 	pubKeyObj->Set(String::NewSymbol("keyType"), String::New(_keyType.c_str()));
 	pubKeyObj->Set(String::NewSymbol("publicKey"), String::New(publicKey.c_str()));
+	if (_keyType == "ed25519"){
+		string altPubKey = strToHex(string((char*) _altPublicKey, crypto_box_PUBLICKEYBYTES));
+		pubKeyObj->Set(String::NewSymbol("curvePublicKey"), String::New(altPubKey.c_str()));
+	} else {
+		pubKeyObj->Set(String::NewSymbol("curvePublicKey"), String::New(publicKey.c_str()));
+	}
 	return pubKeyObj;
 }
 
@@ -415,16 +435,31 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		return scope.Close(Undefined());
 	}
 	//Delete the keypair loaded in memory, part by part, if any
-	if (instance->_keyType != ""){
-		instance->_keyType = "";
-	}
 	if (instance->_privateKey != 0){
+		if (instance->_keyType == "ed25519") sodium_memzero(instance->_privateKey, crypto_sign_SECRETKEYBYTES);
+		else sodium_memzero(instance->_privateKey, crypto_box_SECRETKEYBYTES);
 		delete instance->_privateKey;
 		instance->_privateKey = 0;
 	}
 	if (instance->_publicKey != 0){
+		if (instance->_keyType == "ed25519") sodium_memzero(instance->_publicKey, crypto_sign_PUBLICKEYBYTES);
+		else sodium_memzero(instance->_publicKey, crypto_box_PUBLICKEYBYTES);
 		delete instance->_publicKey;
 		instance->_publicKey = 0;
+	}
+	//Note : altKeys are always curve25519
+	if (instance->_altPrivateKey != 0){
+		sodium_memzero(instance->_altPrivateKey, crypto_box_SECRETKEYBYTES);
+		delete instance->_altPrivateKey;
+		instance->_altPrivateKey = 0;
+	}
+	if (instance->_altPublicKey != 0){
+		sodium_memzero(instance->_altPublicKey, crypto_box_PUBLICKEYBYTES);
+		delete instance->_altPublicKey;
+		instance->_altPublicKey = 0;
+	}
+	if (instance->_keyType != ""){
+		instance->_keyType = "";
 	}
 	instance->_filename = "";
 	//Generating keypairs
@@ -432,16 +467,18 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		unsigned char* privateKey = new unsigned char[crypto_sign_SECRETKEYBYTES];
 		unsigned char* publicKey = new unsigned char[crypto_sign_PUBLICKEYBYTES];
 		crypto_sign_keypair(publicKey, privateKey);
-
 		instance->_privateKey = privateKey;
 		instance->_publicKey = publicKey;
 		instance->_keyType = "ed25519";
+
+		instance->_altPublicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
+		instance->_altPrivateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
+		deriveAltKeys(instance->_publicKey, instance->_privateKey, instance->_altPublicKey, instance->_altPrivateKey);
 
 	} else if (keyType == "curve25519"){
 		unsigned char* privateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
 		unsigned char* publicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
 		crypto_box_keypair(publicKey, privateKey);
-
 		instance->_privateKey = privateKey;
 		instance->_publicKey = publicKey;
 		instance->_keyType = "curve25519";
@@ -491,17 +528,28 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 	String::Utf8Value filenameVal(args[0]->ToString());
 	string filename(*filenameVal);
 
-
-	if (instance->_keyType == ""){
-		instance->_keyType = "";
-	}
 	if (instance->_privateKey != 0){
+		if (instance->_keyType == "ed25519") sodium_memzero(instance->_privateKey, crypto_sign_SECRETKEYBYTES);
+		else sodium_memzero(instance->_privateKey, crypto_box_SECRETKEYBYTES);
 		delete instance->_privateKey;
 		instance->_privateKey = 0;
 	}
-	if (instance ->_publicKey != 0){
+	if (instance->_publicKey != 0){
+		if (instance->_keyType == "ed25519") sodium_memzero(instance->_publicKey, crypto_sign_PUBLICKEYBYTES);
+		else sodium_memzero(instance->_publicKey, crypto_box_PUBLICKEYBYTES);
 		delete instance->_publicKey;
 		instance->_publicKey = 0;
+	}
+	//Note : altKeys are always curve25519
+	if (instance->_altPrivateKey != 0){
+		sodium_memzero(instance->_altPrivateKey, crypto_box_SECRETKEYBYTES);
+		delete instance->_altPrivateKey;
+		instance->_altPrivateKey = 0;
+	}
+	if (instance->_altPublicKey != 0){
+		sodium_memzero(instance->_altPublicKey, crypto_box_PUBLICKEYBYTES);
+		delete instance->_altPublicKey;
+		instance->_altPublicKey = 0;
 	}
 	instance->_filename = "";
 
@@ -549,6 +597,12 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 			ThrowException(Exception::Error(String::New("Error while loading the key file")));
 			return scope.Close(Undefined());
 		}
+	}
+
+	if (instance->_keyType == "ed25519"){
+		instance->_altPublicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
+		instance->_altPrivateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
+		deriveAltKeys(instance->_publicKey, instance->_privateKey, instance->_altPublicKey, instance->_altPrivateKey);
 	}
 
 	instance->_filename = filename;
@@ -651,16 +705,31 @@ Handle<Value> KeyRing::Save(const Arguments& args){
 Handle<Value> KeyRing::Clear(const Arguments& args){
 	HandleScope scope;
 	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
-	if (instance->_keyType != ""){
-		instance->_keyType = "";
-	}
 	if (instance->_privateKey != 0){
+		if (instance->_keyType == "ed25519") sodium_memzero(instance->_privateKey, crypto_sign_SECRETKEYBYTES);
+		else sodium_memzero(instance->_privateKey, crypto_box_SECRETKEYBYTES);
 		delete instance->_privateKey;
 		instance->_privateKey = 0;
 	}
 	if (instance->_publicKey != 0){
+		if (instance->_keyType == "ed25519") sodium_memzero(instance->_publicKey, crypto_sign_PUBLICKEYBYTES);
+		else sodium_memzero(instance->_publicKey, crypto_box_PUBLICKEYBYTES);
 		delete instance->_publicKey;
 		instance->_publicKey = 0;
+	}
+	//Note : altKeys are always curve25519
+	if (instance->_altPrivateKey != 0){
+		sodium_memzero(instance->_altPrivateKey, crypto_box_SECRETKEYBYTES);
+		delete instance->_altPrivateKey;
+		instance->_altPrivateKey = 0;
+	}
+	if (instance->_altPublicKey != 0){
+		sodium_memzero(instance->_altPublicKey, crypto_box_PUBLICKEYBYTES);
+		delete instance->_altPublicKey;
+		instance->_altPublicKey = 0;
+	}
+	if (instance->_keyType != ""){
+		instance->_keyType = "";
 	}
 	instance->_filename = "";
 	return scope.Close(Undefined());
@@ -735,6 +804,13 @@ Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
 		ThrowException(Exception::TypeError(String::New("Unknown error while loading key buffer")));
 		return scope.Close(Boolean::New(false));
 	}
+
+	if (instance->_keyType == "ed25519"){
+		instance->_altPublicKey = new unsigned char[crypto_box_PUBLICKEYBYTES];
+		instance->_altPrivateKey = new unsigned char[crypto_box_SECRETKEYBYTES];
+		deriveAltKeys(instance->_publicKey, instance->_privateKey, instance->_altPublicKey, instance->_altPrivateKey);
+	}
+
 	return scope.Close(Boolean::New(true));
 }
 
@@ -1071,6 +1147,7 @@ void KeyRing::decodeKeyBuffer(std::string const& keyBuffer, std::string* keyType
 	if (!(_keyType == 0x05 || _keyType == 0x06)){ //Checking that the key type is valid
 		stringstream errMsg;
 		errMsg << "Invalid key type: " << (int) _keyType;
+		cout << errMsg.str() << endl;
 		throw new runtime_error(errMsg.str());
 	}
 
@@ -1190,4 +1267,9 @@ std::string KeyRing::encodeKeyBuffer(std::string const& keyType, const unsigned 
 		}
 	} else throw new runtime_error("Unknown key type: " + keyType);
 	return s.str();
+}
+
+void KeyRing::deriveAltKeys(unsigned char* edPub, unsigned char* edSec, unsigned char* cPub, unsigned char* cSec){
+	crypto_sign_ed25519_pk_to_curve25519(cPub, edPub);
+	crypto_sign_ed25519_sk_to_curve25519(cSec, edSec);
 }
