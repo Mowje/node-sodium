@@ -1754,6 +1754,7 @@ void RegisterModule(Handle<Object> target) {
     NEW_INT_PROP(crypto_box_PUBLICKEYBYTES);
     NEW_INT_PROP(crypto_box_SECRETKEYBYTES);
     NEW_INT_PROP(crypto_box_ZEROBYTES);
+    NEW_INT_PROP(crypto_box_MACBYTES);
     NEW_STRING_PROP(crypto_box_PRIMITIVE);
 
     NEW_METHOD(crypto_shorthash);
