@@ -17,19 +17,19 @@
 Returns:
 
   * String with full lib sodium version. Example `1.0.2`
-  
+
 ### sodium_library_version_minor ( )
 
 Returns:
 
-  * Number of minor lib sodium version 
-  
+  * Number of minor lib sodium version
+
 ### sodium_library_version_major ( )
 
 Returns:
 
   * Number of major lib sodium version
-  
+
 ## Utilities
 
 ### memzero (buffer)
@@ -50,7 +50,7 @@ Parameters:
   * `buffer1` buffer you wish to compare with `buffer2`
   * `buffer2` buffer you wish to compare with `buffer1`
   * `size` number of bytes to compare
-  
+
 Returns:
 
   * `0` if `size` bytes of `buffer1` and `buffer2` are equal
@@ -65,7 +65,7 @@ Parameters:
 
   * `buffer1` buffer you wish to compare with `buffer2`
   * `buffer2` buffer you wish to compare with `buffer1`
-  
+
 Returns:
 
   * `0` if `size` bytes of `buffer1` and `buffer2` are equal
@@ -80,28 +80,36 @@ Parameters:
 
   * `buffer1` buffer you wish to compare with `buffer2`
   * `buffer2` buffer you wish to compare with `buffer1`
-  
+
 Returns:
 
   * `0` if `size` bytes of `buffer1` and `buffer2` are equal
   * another value if they are not
-  
-## Random 
+
+## Random
 ### randombytes_buf (buffer)
-Fill the specified buffer with size random bytes. 
+Fill the specified buffer with size random bytes.
 
 Parameters:
 
   * `buffer` buffer to fill with random data
-  
+
 ### randombytes_close ()
-Close the file descriptor or the handle for the cryptographic service provider. 
+Close the file descriptor or the handle for the cryptographic service provider.
 
 ### randombytes_stir ()
-Generate a new key for the pseudorandom number generator. 
+Generate a new key for the pseudorandom number generator.
 
 ### randombytes_random ()
-Return a random 32-bit unsigned value. 
+Return a random 32-bit unsigned value.
 
 ### randombytes_uniform (upperBound)
 Return a value between `0` and `upperBound` using a uniform distribution.
+
+## Ed25519 to Curve25519 conversion/translation
+
+### crypto_sign_ed25519_pk_to_curve25519 (Buffer ed25519PublicKey)
+Transform the given Ed25519 public key into the corresponding Curve25519 public key
+
+### crypto_sign_ed25519_sk_to_curve25519 (Buffer ed25519SecretKey)
+Transform the given Ed25519 secret key into the corresponding Curve25519 secret key

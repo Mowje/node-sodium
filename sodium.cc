@@ -1287,6 +1287,64 @@ Handle<Value> bind_crypto_sign_verify_detached(const Arguments& args){
 }
 
 /**
+* Translates the Ed25519 public key to Curve25519
+* int crypto_sign_ed25519_pk_to_curve25519  (
+*    unsigned char* curve25519_pk,
+*    const unsigned char* ed25519_pk
+* )
+*
+* Parameters:
+*    [out]  curve25519_pk   the resulting Curve25519 public key
+*    [in]   ed25519_pk      the source Ed25519 public key
+*
+* Returns:
+*    0 if operation is successful.
+*/
+Handle<Value> bind_crypto_sign_ed25519_pk_to_curve25519(const Arguments& args){
+    HandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(1, "arguments ed25519_pk must be a buffer");
+
+    GET_ARG_AS_UCHAR_LEN(0, ed25519_pk, crypto_sign_PUBLICKEYBYTES);
+
+    NEW_BUFFER_AND_PTR(curve25519_pk, crypto_box_PUBLICKEYBYTES);
+
+    if (crypto_sign_ed25519_pk_to_curve25519(curve25519_pk_ptr, ed25519_pk) == 0){
+        return scope.Close(curve25519_pk->handle_);
+    }
+    return scope.Close(Undefined());
+}
+
+/**
+* Translates the Ed25519 secret key to Curve25519
+* int crypto_sign_ed25519_sk_to_curve25519  (
+*    unsigned char* curve25519_sk,
+*    const unsigned char* ed25519_sk
+* )
+*
+* Parameters:
+*    [out]  curve25519_sk   the resulting Curve25519 secret key
+*    [in]   ed25519_sk      the source Ed25519 secret key
+*
+* Returns:
+*    0 if operation is successful.
+*/
+Handle<Value> bind_crypto_sign_ed25519_sk_to_curve25519(const Arguments& args){
+    HandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(1, "arguments ed25519_sk must be a buffer");
+
+    GET_ARG_AS_UCHAR_LEN(0, ed25519_sk, crypto_sign_SECRETKEYBYTES);
+
+    NEW_BUFFER_AND_PTR(curve25519_sk, crypto_box_SECRETKEYBYTES);
+
+    if (crypto_sign_ed25519_sk_to_curve25519(curve25519_sk_ptr, ed25519_sk) == 0){
+        return scope.Close(curve25519_sk->handle_);
+    }
+    return scope.Close(Undefined());
+}
+
+/**
  * Encrypts a message given the senders secret key, and receivers public key.
  * int crypto_box	(
  *    unsigned char * ctxt,
@@ -1740,6 +1798,10 @@ void RegisterModule(Handle<Object> target) {
     NEW_INT_PROP(crypto_sign_BYTES);
     NEW_INT_PROP(crypto_sign_PUBLICKEYBYTES);
     NEW_INT_PROP(crypto_sign_SECRETKEYBYTES);
+
+    //Ed25519 -> Curve25519 translation
+    NEW_METHOD(crypto_sign_ed25519_pk_to_curve25519);
+    NEW_METHOD(crypto_sign_ed25519_sk_to_curve25519);
 
     // Box
     NEW_METHOD(crypto_box);
