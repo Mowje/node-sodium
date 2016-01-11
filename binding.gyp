@@ -7,6 +7,7 @@
                   ],
                   'include_dirs': [
                         './libsodium/src/libsodium/include',
+                        "<!(node -e \"require('nan')\")"
                   ],
                   'cflags!': [ '-fno-exceptions' ],
                   'cflags_cc!': [ '-fno-exceptions' ],

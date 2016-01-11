@@ -10,13 +10,13 @@
 
 #include <cstdlib>
 #include <ctime>
-#include <cmath>
-//#include <cstdint> //Is it needed?
 #include <cstring>
 #include <string>
 #include <sstream>
 #include <fstream>
 #include <iostream>
+
+#include <nan.h>
 
 #include "sodium.h"
 
@@ -25,27 +25,33 @@
 using namespace node;
 using namespace v8;
 
+
+//Get the handle to the global object
+Local<Object> globalObj = Nan::GetCurrentContext()->Global();
+
+//Get the buffer constructor function
+Local<Function> bufferConstructor = Local<Function>::Cast(globalObj->Get(Nan::New<String>("Buffer").ToLocalChecked()));
+
 // Check if a function argument is a node Buffer. If not throw V8 exception
 #define ARG_IS_BUFFER(i,msg) \
-    if (!Buffer::HasInstance(args[i])) { \
+    if (!Buffer::HasInstance(info[i])) { \
         std::ostringstream oss; \
         oss << "argument " << msg << " must be a buffer"; \
-        return ThrowException(Exception::Error(String::New(oss.str().c_str()))); \
+        return Nan::ThrowError(oss.str().c_str()); \
     }
 
 #define NEW_BUFFER_AND_PTR(name, size) \
-    Buffer* name = Buffer::New(size); \
-    Local<Object> name ## _handle = Local<Object>::New(name->handle_); \
-    unsigned char* name ## _ptr = (unsigned char*)Buffer::Data(name ## _handle)
+    Local<Object> name = Nan::NewBuffer(size).ToLocalChecked(); \
+    unsigned char* name ## _ptr = (unsigned char*)Buffer::Data(name);
 
 #define GET_ARG_AS(i, NAME, TYPE) \
     ARG_IS_BUFFER(i,#NAME); \
-    TYPE NAME = (TYPE) Buffer::Data(args[i]->ToObject()); \
-    unsigned long long NAME ## _size = Buffer::Length(args[i]->ToObject()); \
+    TYPE NAME = (TYPE) Buffer::Data(info[i]->ToObject()); \
+    unsigned long long NAME ## _size = Buffer::Length(info[i]->ToObject()); \
     if( NAME ## _size == 0 ) { \
         std::ostringstream oss; \
         oss << "argument " << #NAME << " length cannot be zero" ; \
-        return ThrowException(Exception::Error(String::New(oss.str().c_str()))); \
+        return Nan::ThrowError(oss.str().c_str()); \
     }
 
 #define GET_ARG_AS_LEN(i, NAME, MAXLEN, TYPE) \
@@ -53,7 +59,7 @@ using namespace v8;
     if( NAME ## _size != MAXLEN ) { \
         std::ostringstream oss; \
         oss << "argument " << #NAME << " must be " << MAXLEN << " bytes long" ; \
-        return ThrowException(Exception::Error(String::New(oss.str().c_str()))); \
+        return Nan::ThrowError(oss.str().c_str()); \
     }
 
 #define GET_ARG_AS_UCHAR(i, NAME) \
@@ -70,155 +76,164 @@ using namespace v8;
 
 
 #define NUMBER_OF_MANDATORY_ARGS(n, message) \
-    if (args.Length() < (n)) {                \
-        return V8Exception(message);          \
+    if (info.Length() < (n)) {                \
+        return Nan::ThrowError(message);          \
     }
 
+#define TO_REAL_BUFFER(slowBuffer, actualBuffer) \
+    Handle<Value> constructorArgs ## slowBuffer[3] =\
+        { slowBuffer->handle_, \
+          Nan::New<Integer>(Buffer::Length(slowBuffer)), \
+          Nan::New<Integer>(0) }; \
+    Local<Object> actualBuffer = bufferConstructor->NewInstance(3, constructorArgs ## slowBuffer);
+
 //Helper function
-static Handle<Value> V8Exception(const char* msg) {
+/*static Handle<Value> V8Exception(const char* msg) {
     return ThrowException(Exception::Error(String::New(msg)));
-}
+}*/
 
 // Lib Sodium Version Functions
-Handle<Value> bind_sodium_version_string(const Arguments& args) {
-    HandleScope scope;
-    return scope.Close(
-        String::New(sodium_version_string())
-    );
+NAN_METHOD(bind_sodium_version_string) {
+    Nan::EscapableHandleScope scope;
+
+    return info.GetReturnValue().Set(Nan::New<String>(sodium_version_string()).ToLocalChecked());
 }
 
-Handle<Value> bind_sodium_library_version_minor(const Arguments& args) {
-    HandleScope scope;
-    return scope.Close(
-        Integer::New(sodium_library_version_minor())
-    );
+NAN_METHOD(bind_sodium_library_version_minor) {
+    Nan::EscapableHandleScope scope;
+
+    return info.GetReturnValue().Set(Nan::New(sodium_library_version_minor()));
 }
 
-Handle<Value> bind_sodium_library_version_major(const Arguments& args) {
-    HandleScope scope;
-    return scope.Close(
-        Integer::New(sodium_library_version_major())
-    );
+NAN_METHOD(bind_sodium_library_version_major) {
+    Nan::EscapableHandleScope scope;
+
+    return info.GetReturnValue().Set(Nan::New(sodium_library_version_major()));
 }
 
 // Lib Sodium Utils
-Handle<Value> bind_memzero(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_memzero) {
+    Nan::EscapableHandleScope scope;
 
-    NUMBER_OF_MANDATORY_ARGS(1,"argument must be a buffer");
+    NUMBER_OF_MANDATORY_ARGS(1, "argument must be a buffer");
+
     GET_ARG_AS_VOID(0, buffer);
     sodium_memzero(buffer, buffer_size);
-    return scope.Close(Null());
+
+    return info.GetReturnValue().Set(Nan::Null());
 }
 
 /**
  * int sodium_memcmp(const void * const b1_, const void * const b2_, size_t size);
  */
-Handle<Value> bind_memcmp(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_memcmp) {
+    Nan::EscapableHandleScope scope;
 
-    NUMBER_OF_MANDATORY_ARGS(2,"argument must be a buffer");
+    NUMBER_OF_MANDATORY_ARGS(2, "arguments must be buffers");
 
-    GET_ARG_AS_VOID(0, buffer_1);
-    GET_ARG_AS_VOID(1, buffer_2);
+    GET_ARG_AS_VOID(0, buffer1);
+    GET_ARG_AS_VOID(1, buffer2);
 
     size_t size;
-    if (args[2]->IsUint32()) {
-        size = args[2]->Int32Value();
+    if (info[2]->IsUint32()){
+        size = info[2]->Int32Value();
     } else {
-        return V8Exception("argument size must be a positive number");
+        return Nan::ThrowError("argument size must be a positive number");
     }
 
-    size_t s = (buffer_1_size < buffer_2_size)? buffer_1_size : buffer_2_size;
+    size_t s = (buffer1_size < buffer2_size) ? buffer1_size : buffer2_size;
 
-    if( s < size ) {
+    if (s < size){
         size = s;
     }
 
-    return scope.Close(Integer::New(sodium_memcmp(buffer_1, buffer_2, size)));
+    return info.GetReturnValue().Set(Nan::New<Integer>(sodium_memcmp(buffer1, buffer2, size)));
 }
 
 /**
  * char *sodium_bin2hex(char * const hex, const size_t hexlen,
  *                    const unsigned char *bin, const size_t binlen);
  */
-Handle<Value> bind_sodium_bin2hex(const Arguments& args) {
-    HandleScope scope;
-    return V8Exception("use node's native Buffer.toString()");
+NAN_METHOD(bind_sodium_bin2hex) {
+    Nan::EscapableHandleScope scope;
+    return Nan::ThrowError("use node's native Buffer.toString()");
 }
 
 // Lib Sodium Random
 
 // void randombytes_buf(void *const buf, const size_t size)
-Handle<Value> bind_randombytes_buf(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_randombytes_buf) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument must be a buffer");
 
     GET_ARG_AS_VOID(0, buffer);
     randombytes_buf(buffer, buffer_size);
-    return scope.Close(Null());
+
+    return info.GetReturnValue().Set(Nan::Null());
 }
 
 // void randombytes_stir()
-Handle<Value> bind_randombytes_stir(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_randombytes_stir) {
+    Nan::EscapableHandleScope scope;
     randombytes_stir();
-    return scope.Close(Null());
+
+    return info.GetReturnValue().Set(Nan::Null());
 }
 
-Handle<Value> bind_randombytes_close(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_randombytes_close) {
+    Nan::EscapableHandleScope scope;
 
     // int randombytes_close()
-    return scope.Close(Integer::New(randombytes_close()));
+    return info.GetReturnValue().Set(Nan::New<Integer>(randombytes_close()));
 }
 
-Handle<Value> bind_randombytes_random(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_randombytes_random) {
+    Nan::EscapableHandleScope scope;
 
     // uint_32 randombytes_random()
-    return scope.Close(Uint32::New(randombytes_random()));
+    return info.GetReturnValue().Set(Nan::New<Int32>(randombytes_random()));
 }
 
-Handle<Value> bind_randombytes_uniform(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_randombytes_uniform) {
+    Nan::EscapableHandleScope scope;
+
     uint32_t upper_bound;
 
-    NUMBER_OF_MANDATORY_ARGS(1,"argument size must be a positive number");
+    NUMBER_OF_MANDATORY_ARGS(1, "argument size must be a positive number");
 
-    if (args[0]->IsUint32()) {
-        upper_bound = args[0]->Int32Value();
+    if (info[0]->IsUint32()){
+        upper_bound = info[0]->Int32Value();
     } else {
-        return V8Exception("argument size must be a positive number");
+        return Nan::ThrowError("argument size must be a positive number");
     }
 
-    // uint32_t randombytes_uniform(const uint32_t upper_bound)
-    return scope.Close(Uint32::New(randombytes_uniform(upper_bound)));
+    return info.GetReturnValue().Set(
+        Nan::New<Int32>(randombytes_uniform(upper_bound))
+    );
 }
 
-
-Handle<Value> bind_crypto_verify_16(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_verify_16) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments must be two buffers");
 
     GET_ARG_AS_UCHAR_LEN(0,string1, crypto_verify_16_BYTES);
     GET_ARG_AS_UCHAR_LEN(1,string2, crypto_verify_16_BYTES);
 
-    return scope.Close(Integer::New(crypto_verify_16(string1, string2)));
+    return info.GetReturnValue().Set(Nan::New<Integer>(crypto_verify_16(string1, string2)));
 }
 
 // int crypto_verify_16(const unsigned char * string1, const unsigned char * string2)
-Handle<Value> bind_crypto_verify_32(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_verify_32) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments must be two buffers");
 
     GET_ARG_AS_UCHAR_LEN(0,string1, crypto_verify_32_BYTES);
     GET_ARG_AS_UCHAR_LEN(1,string2, crypto_verify_32_BYTES);
 
-    return scope.Close(Integer::New(crypto_verify_32(string1, string2)));
+    return info.GetReturnValue().Set(Nan::New<Integer>(crypto_verify_32(string1, string2)));
 }
 
 /**
@@ -243,8 +258,8 @@ Handle<Value> bind_crypto_verify_32(const Arguments& args) {
  * outputs short, but unpredictable (without knowing the secret key) values
  * suitable for picking a list in a hash table for a given key.
  */
-Handle<Value> bind_crypto_shorthash(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_shorthash) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
 
@@ -254,9 +269,10 @@ Handle<Value> bind_crypto_shorthash(const Arguments& args) {
     NEW_BUFFER_AND_PTR(hash, crypto_shorthash_BYTES);
 
     if( crypto_shorthash(hash_ptr, message, message_size, key) == 0 ) {
-        return scope.Close(hash->handle_);
+        return info.GetReturnValue().Set(hash);
+    } else {
+        return info.GetReturnValue().Set(Nan::Null());
     }
-    return scope.Close(Null());
 }
 
 /**
@@ -265,8 +281,8 @@ Handle<Value> bind_crypto_shorthash(const Arguments& args) {
  *    const unsigned char * msg,
  *    unsigned long long mlen)
  */
-Handle<Value> bind_crypto_hash(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_hash) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
 
@@ -275,9 +291,10 @@ Handle<Value> bind_crypto_hash(const Arguments& args) {
     NEW_BUFFER_AND_PTR(hash, crypto_hash_BYTES);
 
     if( crypto_hash(hash_ptr, msg, msg_size) == 0 ) {
-        return scope.Close(hash->handle_);
+        return info.GetReturnValue().Set(hash);
+    } else {
+        return info.GetReturnValue().Set(Nan::Null());
     }
-    return scope.Close(Null());
 }
 
 /**
@@ -286,17 +303,18 @@ Handle<Value> bind_crypto_hash(const Arguments& args) {
  *    const unsigned char * msg,
  *    unsigned long long mlen)
  */
-Handle<Value> bind_crypto_hash_sha256(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_hash_sha256) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
     GET_ARG_AS_UCHAR(0, msg);
     NEW_BUFFER_AND_PTR(hash, 32);
 
     if( crypto_hash_sha256(hash_ptr, msg, msg_size) == 0 ) {
-        return scope.Close(hash->handle_);
+        return info.GetReturnValue().Set(hash);
+    } else {
+        return info.GetReturnValue().Set(Nan::Null());
     }
-    return scope.Close(Null());
 }
 
 /**
@@ -305,8 +323,8 @@ Handle<Value> bind_crypto_hash_sha256(const Arguments& args) {
  *    const unsigned char * msg,
  *    unsigned long long mlen)
  */
-Handle<Value> bind_crypto_hash_sha512(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_hash_sha512) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument message must be a buffer");
 
@@ -315,9 +333,10 @@ Handle<Value> bind_crypto_hash_sha512(const Arguments& args) {
     NEW_BUFFER_AND_PTR(hash, 64);
 
     if( crypto_hash_sha512(hash_ptr, msg, msg_size) == 0 ) {
-        return scope.Close(hash->handle_);
+        return info.GetReturnValue().Set(hash);
+    } else {
+        return info.GetReturnValue().Set(Nan::Null());
     }
-    return scope.Close(Null());
 }
 
 /**
@@ -329,8 +348,8 @@ Handle<Value> bind_crypto_hash_sha512(const Arguments& args) {
 *                                      unsigned long long opslimit,
 *                                      size_t memlimit);
 */
-Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256(const Arguments& args){
-    HandleScope scope;
+NAN_METHOD(bind_crypto_pwhash_scryptsalsa208sha256) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3, "arguments password and salt must be buffers; keyLength, opslimit and memlimit must be integers");
 
@@ -342,48 +361,48 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256(const Arguments& args){
     size_t memlimit = crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE;
 
     //Get the key length parameter
-    if (args.Length() >= 3 && !(args[2]->IsUndefined() || args[2]->IsNull())){
-        if (!args[2]->IsNumber()){
-            ThrowException(Exception::TypeError(String::New("when defined, keyLength must be a positive integer")));
-            return scope.Close(Undefined());
+    if (info.Length() >= 3 && !(info[2]->IsUndefined() || info[2]->IsNull())){
+        if (!info[2]->IsNumber()){
+            Nan::ThrowTypeError("when defined, keyLength must be a positive integer");
+            return info.GetReturnValue().Set(Nan::Undefined());
         } else {
-            int keyLengthArg = args[2]->Int32Value();
+            int keyLengthArg = info[2]->Int32Value();
             //Check parameter value
             if (keyLengthArg <= 0){
-                ThrowException(Exception::RangeError(String::New("when defined, keyLength must be a positive integer")));
-                return scope.Close(Undefined());
+                Nan::ThrowRangeError("when defined, keyLength must be a positive integer");
+                return info.GetReturnValue().Set(Nan::Undefined());
             }
             keyLength = (unsigned int) keyLengthArg;
         }
     }
 
     //Get the opslimit parameter
-    if (args.Length() >= 4 && !(args[3]->IsUndefined() || args[3]->IsNull())){
-        if (!args[3]->IsNumber()){
-            ThrowException(Exception::TypeError(String::New("when defined, opslimit must be a positive integer")));
-            return scope.Close(Undefined());
+    if (info.Length() >= 4 && !(info[3]->IsUndefined() || info[3]->IsNull())){
+        if (!info[3]->IsNumber()){
+            Nan::ThrowTypeError("when defined, opslimit must be a positive integer");
+            return info.GetReturnValue().Set(Nan::Undefined());
         } else {
-            long long opslimitArg = args[3]->IntegerValue();
+            long long opslimitArg = info[3]->IntegerValue();
             //Check parameter value
             if (opslimitArg <= 0){
-                ThrowException(Exception::RangeError(String::New("when defined, opslimit must be a positive integer")));
-                return scope.Close(Undefined());
+                Nan::ThrowRangeError("when defined, opslimit must be a positive integer");
+                return info.GetReturnValue().Set(Nan::Undefined());
             }
             opslimit = opslimitArg;
         }
     }
 
     //Get the memlimit parameter
-    if (args.Length() >= 5 && !(args[4]->IsUndefined() || args[4]->IsNull())){
-        if (!args[4]->IsNumber()){
-            ThrowException(Exception::TypeError(String::New("when defined, memlimit must be a positive integer")));
-            return scope.Close(Undefined());
+    if (info.Length() >= 5 && !(info[4]->IsUndefined() || info[4]->IsNull())){
+        if (!info[4]->IsNumber()){
+            Nan::ThrowTypeError("when defined, memlimit must be a positive integer");
+            return info.GetReturnValue().Set(Nan::Undefined());
         } else {
-            size_t memlimitArg = args[4]->IntegerValue();
+            size_t memlimitArg = info[4]->IntegerValue();
             //Check parameter value
             if (memlimitArg <= 0){
-                ThrowException(Exception::RangeError(String::New("when defined, memlimit must be a positive integer")));
-                return scope.Close(Undefined());
+                Nan::ThrowRangeError("when defined, memlimit must be a positive integer");
+                return info.GetReturnValue().Set(Nan::Undefined());
             }
             memlimit = memlimitArg;
         }
@@ -392,10 +411,10 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256(const Arguments& args){
     NEW_BUFFER_AND_PTR(key, keyLength);
 
     if (crypto_pwhash_scryptsalsa208sha256(key_ptr, keyLength, (char*) password, password_size, salt, opslimit, memlimit) != 0){
-        ThrowException(Exception::Error(String::New("out of memory")));
-        return scope.Close(Undefined());
+        Nan::ThrowError("out of memory");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
-    return scope.Close(key_handle);
+    return info.GetReturnValue().Set(key);
 
 }
 
@@ -405,8 +424,8 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256(const Arguments& args){
 *                                      uint64_t N, uint32_t r, uint32_t p,
 *                                      uint8_t * buf, size_t buflen)
 */
-Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256_ll(const Arguments& args){
-    HandleScope scope;
+NAN_METHOD(bind_crypto_pwhash_scryptsalsa208sha256_ll){
+    Nan::EscapableHandleScope scope;
     // scrypt(pass, salt, opsLimit, r, p, keyLength)
     NUMBER_OF_MANDATORY_ARGS(2, "arguments password and salt must be a buffers");
 
@@ -418,57 +437,57 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256_ll(const Arguments& args){
     GET_ARG_AS_UCHAR(0, password);
     GET_ARG_AS_UCHAR(1, salt);
 
-    if (args.Length() >= 3 && !(args[2]->IsUndefined() || args[2]->IsNull())){
-        if (!args[2]->IsNumber()){
-            ThrowException(Exception::TypeError(String::New("when defined, N must be a positive number")));
-            return scope.Close(Undefined());
+    if (info.Length() >= 3 && !(info[2]->IsUndefined() || info[2]->IsNull())){
+        if (!info[2]->IsNumber()){
+            Nan::ThrowTypeError("when defined, N must be a positive number");
+            return info.GetReturnValue().Set(Nan::Undefined());
         } else {
-            long long nArg = (long long) args[2]->IntegerValue();
+            long long nArg = (long long) info[2]->IntegerValue();
             if (nArg <= 0){
-                ThrowException(Exception::RangeError(String::New("when defined, N must be a positive number")));
-                return scope.Close(Undefined());
+                Nan::ThrowRangeError("when defined, N must be a positive number");
+                return info.GetReturnValue().Set(Nan::Undefined());
             }
             N = (unsigned long long) nArg;
         }
     }
 
-    if (args.Length() >= 4 && !(args[3]->IsUndefined() || args[3]->IsNull())){
-        if (!args[3]->IsNumber()){
-            ThrowException(Exception::TypeError(String::New("when defined, r must be a positive integer")));
-            return scope.Close(Undefined());
+    if (info.Length() >= 4 && !(info[3]->IsUndefined() || info[3]->IsNull())){
+        if (!info[3]->IsNumber()){
+            Nan::ThrowTypeError("when defined, r must be a positive integer");
+            return info.GetReturnValue().Set(Nan::Undefined());
         } else {
-            int rArg = args[3]->Int32Value();
+            int rArg = info[3]->Int32Value();
             if (rArg <= 0){
-                ThrowException(Exception::RangeError(String::New("when defined, r must be a positive integer")));
-                return scope.Close(Undefined());
+                Nan::ThrowRangeError("when defined, r must be a positive integer");
+                return info.GetReturnValue().Set(Nan::Undefined());
             }
             r = (unsigned int) rArg;
         }
     }
 
-    if (args.Length() >= 5 && !(args[4]->IsUndefined() || args[4]->IsNull())){
-        if (!args[4]->IsNumber()){
-            ThrowException(Exception::TypeError(String::New("when defined, p must be a positive integer")));
-            return scope.Close(Undefined());
+    if (info.Length() >= 5 && !(info[4]->IsUndefined() || info[4]->IsNull())){
+        if (!info[4]->IsNumber()){
+            Nan::ThrowTypeError("when defined, p must be a positive integer");
+            return info.GetReturnValue().Set(Nan::Undefined());
         } else {
-            int pArg = args[4]->Int32Value();
+            int pArg = info[4]->Int32Value();
             if (pArg <= 0){
-                ThrowException(Exception::RangeError(String::New("when defined, p must be a positive integer")));
-                return scope.Close(Undefined());
+                Nan::ThrowRangeError("when defined, p must be a positive integer");
+                return info.GetReturnValue().Set(Nan::Undefined());
             }
             p = (unsigned int) pArg;
         }
     }
 
-    if (args.Length() >= 6 && !(args[5]->IsUndefined() || args[5]->IsNull())){
-        if (!args[5]->IsNumber()){
-            ThrowException(Exception::TypeError(String::New("when defined, keyLength must be a positive integer")));
-            return scope.Close(Undefined());
+    if (info.Length() >= 6 && !(info[5]->IsUndefined() || info[5]->IsNull())){
+        if (!info[5]->IsNumber()){
+            Nan::ThrowTypeError("when defined, keyLength must be a positive integer");
+            return info.GetReturnValue().Set(Nan::Undefined());
         } else {
-            int keyLengthArg = args[5]->Int32Value();
+            int keyLengthArg = info[5]->Int32Value();
             if (keyLengthArg <= 0){
-                ThrowException(Exception::RangeError(String::New("when defined, keyLength must be a positive integer")));
-                return scope.Close(Undefined());
+                Nan::ThrowRangeError("when defined, keyLength must be a positive integer");
+                return info.GetReturnValue().Set(Nan::Undefined());
             }
             keyLength = (unsigned int) keyLengthArg;
         }
@@ -477,10 +496,10 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256_ll(const Arguments& args){
     NEW_BUFFER_AND_PTR(key, keyLength);
 
     if (crypto_pwhash_scryptsalsa208sha256_ll(password, password_size, salt, salt_size, N, r, p, key_ptr, keyLength) != 0){
-        ThrowException(Exception::Error(String::New("out of memory")));
-        return scope.Close(Undefined());
+        Nan::ThrowError("out of memory");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
-    return scope.Close(key_handle);
+    return info.GetReturnValue().Set(key);
 
 }
 
@@ -492,22 +511,21 @@ Handle<Value> bind_crypto_pwhash_scryptsalsa208sha256_ll(const Arguments& args){
  * Function callback
  *
  */
-Handle<Value> pw_file_encrypt(const Arguments& args){
-    HandleScope scope;
-    Local<Object> globalObj = Context::GetCurrent()->Global();
+NAN_METHOD(pw_file_encrypt){
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3, "arguments fileContent, password and filename can't be null");
 
-    if (args.Length() > 3){
-        if (!args[3]->IsFunction()){
-            ThrowException(Exception::TypeError(String::New("When defined, callback must be a function")));
-            return scope.Close(Undefined());
+    if (info.Length() > 3){
+        if (!info[3]->IsFunction()){
+            Nan::ThrowTypeError("When defined, callback must be a function");
+            return info.GetReturnValue().Set(Nan::Undefined());
         }
     }
 
     GET_ARG_AS_UCHAR(0, fileContent);
     GET_ARG_AS_UCHAR(1, password);
-    String::Utf8Value filenameVal(args[2]);
+    String::Utf8Value filenameVal(info[2]);
     std::string filename(*filenameVal);
 
     //std::string filename((char*)filenameBuffer, filenameBuffer_size);
@@ -579,13 +597,13 @@ Handle<Value> pw_file_encrypt(const Arguments& args){
     encryptedContent = 0;
 
     //Either callback or return undefined
-    if (args.Length() > 3){
-        Local<Function> callback = Local<Function>::Cast(args[3]);
+    if (info.Length() > 3){
+        Local<Function> callback = info[3].As<Function>();
         const int argc = 0;
         Local<Value> argv[argc];
-        callback->Call(globalObj, argc, argv);
+        Nan::MakeCallback(globalObj, callback, argc, argv);
     }
-    return scope.Close(Undefined());
+    return info.GetReturnValue().Set(Nan::Undefined());
 }
 
 /**
@@ -595,8 +613,8 @@ Handle<Value> pw_file_encrypt(const Arguments& args){
  * Function callback
  *
  */
-Handle<Value> pw_file_decrypt(const Arguments& args){
-    HandleScope scope;
+NAN_METHOD(pw_file_decrypt){
+    Nan::EscapableHandleScope scope;
     //Local<Object> globalObj = Context::GetCurrent()->Global();
 
     //Local<Value> err;
@@ -604,15 +622,15 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
 
     NUMBER_OF_MANDATORY_ARGS(2, "arguments filename and password must be defined");
 
-    if (args.Length() > 2){
-        if (!args[2]->IsFunction()){
-            ThrowException(Exception::TypeError(String::New("When defined, callback must be a function")));
-            return scope.Close(Undefined());
+    if (info.Length() > 2){
+        if (!info[2]->IsFunction()){
+            Nan::ThrowTypeError("When defined, callback must be a function");
+            return info.GetReturnValue().Set(Nan::Undefined());
         }
     }
 
     //GET_ARG_AS_UCHAR(0, filename);
-    String::Utf8Value filenameVal(args[0]);
+    String::Utf8Value filenameVal(info[0]);
     std::string filename(*filenameVal);
     GET_ARG_AS_UCHAR(1, password);
 
@@ -645,8 +663,8 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
     const unsigned long opsLimitBeforeException = 4194304;
 
     if (buf->in_avail() < minRemainingSize){
-        ThrowException(Exception::RangeError(String::New("Invalid file format")));
-        return scope.Close(Undefined());
+        Nan::ThrowTypeError("Invalid file format");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
 
     //Reading r
@@ -669,8 +687,8 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
     minRemainingSize -= 8;
 
     if (opsLimit > opsLimitBeforeException){
-        ThrowException(Exception::RangeError(String::New("Encrypted key file asks from more scrypt iterations than is allowed")));
-        return scope.Close(Undefined());
+        Nan::ThrowRangeError("Encrypted key file asks from more scrypt iterations than is allowed");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
 
     //Reading salt size
@@ -688,13 +706,13 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
     minRemainingSize += nonceSize;
 
     if (buf->in_avail() < minRemainingSize){
-        ThrowException(Exception::RangeError(String::New("Invalid encrypted file format")));
-        return scope.Close(Undefined());
+        Nan::ThrowRangeError("Invalid encrypted file format");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
 
     if (nonceSize != crypto_secretbox_NONCEBYTES){
-        ThrowException(Exception::RangeError(String::New("Invalid nonce size")));
-        return scope.Close(Undefined());
+        Nan::ThrowRangeError("Invalid nonce size");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
 
     //Reading the supposed encrypted content length and check its validity
@@ -706,8 +724,8 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
     minRemainingSize += encryptedContentSize;
 
     if (buf->in_avail() < minRemainingSize){
-        ThrowException(Exception::RangeError(String::New("Invalid encrypted file format")));
-        return scope.Close(Undefined());
+        Nan::ThrowRangeError("Invalid encrypted file format");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
 
     //Reading salt
@@ -745,8 +763,8 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
 
     //Decryption
     if (crypto_secretbox_open_easy(plaintext_ptr, encryptedContent, encryptedContentSize, nonce, derivedKey) != 0){
-        ThrowException(Exception::Error(String::New("Invalid password or corrupted file")));
-        return scope.Close(Undefined());
+        Nan::ThrowError("Invalid password or corrupted file");
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
 
     //Memory clean up
@@ -762,12 +780,12 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
     nonce = 0;
     derivedKey = 0;
 
-    /*if (args.Length() > 2){ //Callback has been provided
-        Local<Function> callback = Local<Function>::Cast(args[2]);
+    /*if (info.Length() > 2){ //Callback has been provided
+        Local<Function> callback = Local<Function>::Cast(info[2]);
         Local<Value> argv[argc] = {Undefined(), Local<Value>::New(plaintext->handle_)};
         callback->Call(globalObj, argc, argv);
         return scope.Close(Undefined());
-    } else*/ return scope.Close(plaintext_handle);
+    } else*/ return info.GetReturnValue().Set(plaintext);
 
 }
 
@@ -784,8 +802,8 @@ Handle<Value> pw_file_decrypt(const Arguments& args){
  *  [in] 	mlen 	the length of msg.
  *  [in] 	key 	the key used to compute the token.
  */
-Handle<Value> bind_crypto_auth(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_auth) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments message, and key must be buffers");
 
@@ -795,9 +813,10 @@ Handle<Value> bind_crypto_auth(const Arguments& args) {
     NEW_BUFFER_AND_PTR(token, crypto_auth_BYTES);
 
     if( crypto_auth(token_ptr, msg, msg_size, key) == 0 ) {
-        return scope.Close(token->handle_);
+        return info.GetReturnValue().Set(token);
+    } else {
+        return info.GetReturnValue().Set(Nan::Null());
     }
-    return scope.Close(Null());
 }
 
 /**
@@ -813,8 +832,8 @@ Handle<Value> bind_crypto_auth(const Arguments& args) {
  *  [in] 	mlen 	the length of msg.
  *  [in] 	key 	the key used to compute the token.
  */
-Handle<Value> bind_crypto_auth_verify(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_auth_verify) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments token, message, and key must be buffers");
 
@@ -822,7 +841,7 @@ Handle<Value> bind_crypto_auth_verify(const Arguments& args) {
     GET_ARG_AS_UCHAR(1, message);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_auth_KEYBYTES);
 
-    return scope.Close(Integer::New(crypto_auth_verify(token, message, message_size, key)));
+    return info.GetReturnValue().Set(Nan::New<Integer>(crypto_auth_verify(token, message, message_size, key)));
 }
 
 /**
@@ -838,8 +857,8 @@ Handle<Value> bind_crypto_auth_verify(const Arguments& args) {
  *  [in] 	mlen 	the length of msg.
  *  [in] 	key 	the key used to compute the token.
  */
-Handle<Value> bind_crypto_onetimeauth(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_onetimeauth) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments message, and key must be buffers");
 
@@ -849,9 +868,10 @@ Handle<Value> bind_crypto_onetimeauth(const Arguments& args) {
     NEW_BUFFER_AND_PTR(token, crypto_onetimeauth_BYTES);
 
     if( crypto_onetimeauth(token_ptr, message, message_size, key) == 0 ) {
-        return scope.Close(token->handle_);
+        return info.GetReturnValue().Set(token);
+    } else {
+        return info.GetReturnValue().Set(Nan::Null());
     }
-    return scope.Close(Null());
 }
 
 /**
@@ -867,8 +887,8 @@ Handle<Value> bind_crypto_onetimeauth(const Arguments& args) {
  *  [in] 	mlen 	the length of msg.
  *  [in] 	key 	the key used to compute the token.
  */
-Handle<Value> bind_crypto_onetimeauth_verify(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_onetimeauth_verify) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments token, message, and key must be buffers");
 
@@ -876,7 +896,7 @@ Handle<Value> bind_crypto_onetimeauth_verify(const Arguments& args) {
     GET_ARG_AS_UCHAR(1, message);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_onetimeauth_KEYBYTES);
 
-    return scope.Close(Integer::New(crypto_onetimeauth_verify(token, message, message_size, key)));
+    return info.GetReturnValue().Set(Nan::New<Integer>(crypto_onetimeauth_verify(token, message, message_size, key)));
 }
 
 /**
@@ -897,24 +917,25 @@ Handle<Value> bind_crypto_onetimeauth_verify(const Arguments& args) {
  * Returns:
  *    0 if operation successful
  */
-Handle<Value> bind_crypto_stream(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_stream) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"argument length must be a positive number, arguments nonce, and key must be buffers");
 
-    if (!args[0]->IsUint32())
-        return V8Exception("argument length must be positive number");
+    if (!info[0]->IsUint32())
+        return Nan::ThrowError("argument length must be positive number");
 
-    unsigned long long slen = args[0]->ToUint32()->Value();
+    unsigned long long slen = info[0]->ToUint32()->Value();
     GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_stream_NONCEBYTES);
     GET_ARG_AS_UCHAR_LEN(2, key, crypto_stream_KEYBYTES);
 
     NEW_BUFFER_AND_PTR(stream, slen);
 
-    if( crypto_stream(stream_ptr, slen, nonce, key) == 0) {
-        return scope.Close(stream->handle_);
+    if (crypto_stream(stream_ptr, slen, nonce, key) == 0) {
+        return info.GetReturnValue().Set(stream);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -940,8 +961,8 @@ Handle<Value> bind_crypto_stream(const Arguments& args) {
  *    nonce must have length minimum crypto_stream_NONCEBYTES.
  *    key must have length minimum crpyto_stream_KEYBYTES
  */
-Handle<Value> bind_crypto_stream_xor(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_stream_xor) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce, and key must be buffers");
 
@@ -952,9 +973,10 @@ Handle<Value> bind_crypto_stream_xor(const Arguments& args) {
     NEW_BUFFER_AND_PTR(ctxt, message_size);
 
     if( crypto_stream_xor(ctxt_ptr, message, message_size, nonce, key) == 0) {
-        return scope.Close(ctxt->handle_);
+        return info.GetReturnValue().Set(ctxt);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -984,8 +1006,8 @@ Handle<Value> bind_crypto_stream_xor(const Arguments& args) {
  *    first crypto_secretbox_BOXZERBYTES of ctxt be all 0.
  *    first mlen bytes of ctxt will contain the ciphertext.
  */
-Handle<Value> bind_crypto_secretbox(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_secretbox) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce, and key must be buffers");
 
@@ -1008,9 +1030,10 @@ Handle<Value> bind_crypto_secretbox(const Arguments& args) {
     NEW_BUFFER_AND_PTR(ctxt, message_size);
 
     if( crypto_secretbox(ctxt_ptr, pmb_ptr, message_size, nonce, key) == 0) {
-        return scope.Close(ctxt->handle_);
+        return info.GetReturnValue().Set(ctxt);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -1044,8 +1067,8 @@ Handle<Value> bind_crypto_secretbox(const Arguments& args) {
  * Warning:
  *    if verification fails msg may contain data from the computation.
  */
-Handle<Value> bind_crypto_secretbox_open(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_secretbox_open) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments cipherText, nonce, and key must be buffers");
 
@@ -1059,17 +1082,17 @@ Handle<Value> bind_crypto_secretbox_open(const Arguments& args) {
     if( cipher_text_size < crypto_secretbox_BOXZEROBYTES ) {
         std::ostringstream oss;
         oss << "argument cipherText must have at least " << crypto_secretbox_BOXZEROBYTES << " bytes";
-        return V8Exception(oss.str().c_str());
+        return Nan::ThrowError(oss.str().c_str());
     }
 
     unsigned int i;
-    for(i=0; i < crypto_secretbox_BOXZEROBYTES; i++) {
+    for(i = 0; i < crypto_secretbox_BOXZEROBYTES; i++) {
         if( cipher_text[i] ) break;
     }
     if( i < crypto_secretbox_BOXZEROBYTES ) {
         std::ostringstream oss;
         oss << "the first " << crypto_secretbox_BOXZEROBYTES << " bytes of argument cipherText must be 0";
-        return V8Exception(oss.str().c_str());
+        return Nan::ThrowError(oss.str().c_str());
     }
 
     if( crypto_secretbox_open(message_ptr, cipher_text, cipher_text_size, nonce, key) == 0) {
@@ -1078,9 +1101,98 @@ Handle<Value> bind_crypto_secretbox_open(const Arguments& args) {
         NEW_BUFFER_AND_PTR(plain_text, cipher_text_size - crypto_secretbox_ZEROBYTES);
         memcpy(plain_text_ptr,(void*) (message_ptr + crypto_secretbox_ZEROBYTES), cipher_text_size - crypto_secretbox_ZEROBYTES);
 
-        return scope.Close(plain_text->handle_);
+        return info.GetReturnValue().Set(plain_text);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
+}
+
+/**
+ * Encrypts and authenticates a message using the given secret key, and nonce.
+ *
+ * int crypto_secretbox_easy(
+ *    unsigned char *ctxt,
+ *    const unsigned char *msg,
+ *    unsigned long long mlen,
+ *    const unsigned char *nonce,
+ *    const unsigned char *key)
+ *
+ * Parameters:
+ *    [out] ctxt   the buffer for the cipher-text.
+ *    [in]   msg   the message to be encrypted.
+ *    [in]   mlen   the length of msg.
+ *    [in]   nonce   a nonce with length crypto_box_NONCEBYTES.
+ *    [in]   key   the shared secret key.
+ *
+ * Returns:
+ *    0 if operation is successful.
+ *
+ * Precondition:
+ *
+ * Postcondition:
+ *    first mlen + crypto_secretbox_MACLENGTH bytes of ctxt will contain the ciphertext.
+ */
+
+NAN_METHOD(bind_crypto_secretbox_easy) {
+    Nan::EscapableHandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce, and key must be buffers");
+
+    GET_ARG_AS_UCHAR(0, message);
+    GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_secretbox_NONCEBYTES);
+    GET_ARG_AS_UCHAR_LEN(2, key, crypto_secretbox_KEYBYTES);
+
+    NEW_BUFFER_AND_PTR(c, message_size + crypto_secretbox_MACBYTES);
+
+    if (crypto_secretbox_easy(c_ptr, message, message_size, nonce, key) == 0) {
+        return info.GetReturnValue().Set(c);
+    } else {
+        return;
+    }
+}
+/**
+ * int crypto_secretbox_open_easy(
+ *    unsigned char *msg,
+ *    const unsigned char *ctxt,
+ *    unsigned long long clen,
+ *    const unsigned char *nonce,
+ *    const unsigned char *key)
+ * Parameters:
+ *    [out] msg   the buffer to place resulting plaintext.
+ *    [in]   ctxt   the ciphertext to be decrypted.
+ *    [in]   clen   the length of the ciphertext.
+ *    [in]   nonce   a randomly generated nonce.
+ *    [in]   key   the shared secret key.
+ *
+ * Returns:
+ *    0 if successful and -1 if verification fails.
+ *
+ * Precondition:
+ *    the nonce must be of length crypto_secretbox_NONCEBYTES
+ *
+ * Postcondition:
+ *    first clen - crypto_secretbox_MACBYTES bytes of msg will contain the plaintext.
+ *
+ * Warning:
+ *    if verification fails msg may contain data from the computation.
+ */
+
+NAN_METHOD(bind_crypto_secretbox_open_easy) {
+    Nan::EscapableHandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce, and key must be buffers");
+
+    GET_ARG_AS_UCHAR(0, cipher_text);
+    GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_secretbox_NONCEBYTES);
+    GET_ARG_AS_UCHAR_LEN(2, key, crypto_secretbox_KEYBYTES);
+
+    NEW_BUFFER_AND_PTR(c, cipher_text_size - crypto_secretbox_MACBYTES);
+
+    if (crypto_secretbox_open_easy(c_ptr, cipher_text, cipher_text_size, nonce, key) == 0) {
+        return info.GetReturnValue().Set(c);
+    } else {
+        return;
+    }
 }
 
 /**
@@ -1107,8 +1219,8 @@ Handle<Value> bind_crypto_secretbox_open(const Arguments& args) {
  *    sig must be of length mlen+crypto_sign_BYTES
  *    sk must be of length crypto_sign_SECRETKEYBYTES
  */
-Handle<Value> bind_crypto_sign(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_sign) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments message, and secretKey must be buffers");
 
@@ -1119,9 +1231,10 @@ Handle<Value> bind_crypto_sign(const Arguments& args) {
 
     unsigned long long slen = 0;
     if( crypto_sign(sig_ptr, &slen, message, message_size, secretKey) == 0) {
-        return scope.Close(sig->handle_);
+        return info.GetReturnValue().Set(sig);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -1148,8 +1261,8 @@ Handle<Value> bind_crypto_sign(const Arguments& args) {
 *    sig must be of length crypto_sign_BYTES
 *    sk must be of length crypto_sign_SECRETKEYBYTES
 */
-Handle<Value> bind_crypto_sign_detached(const Arguments& args){
-    HandleScope scope;
+NAN_METHOD(bind_crypto_sign_detached){
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2, "arguments message, and secretKey must be buffers");
 
@@ -1160,9 +1273,10 @@ Handle<Value> bind_crypto_sign_detached(const Arguments& args){
 
     unsigned long long slen = 0;
     if ( crypto_sign_detached(sig_ptr, &slen, message, message_size, secretKey) == 0){
-        return scope.Close(sig->handle_);
+        return info.GetReturnValue().Set(sig);
+    } else {
+        return info.GetReturnValue().Set(Nan::Undefined());
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -1187,19 +1301,68 @@ Handle<Value> bind_crypto_sign_detached(const Arguments& args){
  *    first crypto_sign_PUBLICKEYTBYTES of vk will be the key data.
  *    first crypto_sign_SECRETKEYTBYTES of sk will be the key data.
  */
-Handle<Value> bind_crypto_sign_keypair(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_sign_keypair) {
+    Nan::EscapableHandleScope scope;
 
     NEW_BUFFER_AND_PTR(vk, crypto_sign_PUBLICKEYBYTES);
     NEW_BUFFER_AND_PTR(sk, crypto_sign_SECRETKEYBYTES);
 
-    if( crypto_sign_keypair(vk_ptr, sk_ptr) == 0) {
-        Local<Object> result = Object::New();
-        result->Set(String::NewSymbol("publicKey"),vk->handle_);
-        result->Set(String::NewSymbol("secretKey"), sk->handle_);
-        return scope.Close(result);
+    if (crypto_sign_keypair(vk_ptr, sk_ptr) == 0) {
+        Local<Object> result = Nan::New<Object>();
+        result->ForceSet(Nan::New<String>("publicKey").ToLocalChecked(), vk, DontDelete);
+        result->ForceSet(Nan::New<String>("secretKey").ToLocalChecked(), sk, DontDelete);
+
+        return info.GetReturnValue().Set(result);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
+}
+
+/**
+ * Deterministically generate a signing/verification key pair from a seed.
+ *
+ * int crypto_sign_keypair(
+ *    unsigned char * vk,
+ *    unsigned char * sk,
+ *    const unsigned char * ps)
+ *
+ * Parameters:
+ *    [out] vk  the verification key.
+ *    [out] sk  the signing key.
+ *    [in]  sd  the seed for the key-pair.
+ *
+ * Returns:
+ *    0 if operation successful.
+ *
+ * Precondition:
+ *    the buffer for vk must be at least crypto_sign_PUBLICKEYBYTES in length
+ *    the buffer for sk must be at least crypto_sign_SECRETKEYTBYTES in length
+ *    the buffer for sd must be at least crypto_sign_SEEDBYTES in length
+ *
+ * Postcondition:
+ *    first crypto_sign_PUBLICKEYTBYTES of vk will be the key data.
+ *    first crypto_sign_SECRETKEYTBYTES of sk will be the key data.
+ */
+NAN_METHOD(bind_crypto_sign_seed_keypair) {
+    Nan::EscapableHandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(1,"the argument seed must be a buffer");
+
+    GET_ARG_AS_UCHAR_LEN(0, sd, crypto_sign_SEEDBYTES);
+
+    NEW_BUFFER_AND_PTR(vk, crypto_sign_PUBLICKEYBYTES);
+    NEW_BUFFER_AND_PTR(sk, crypto_sign_SECRETKEYBYTES);
+
+    if (crypto_sign_seed_keypair(vk_ptr, sk_ptr, sd) == 0) {
+        Local<Object> result = Nan::New<Object>();
+
+        result->ForceSet(Nan::New<String>("publicKey").ToLocalChecked(), vk, DontDelete);
+        result->ForceSet(Nan::New<String>("secretKey").ToLocalChecked(), sk, DontDelete);
+
+        return info.GetReturnValue().Set(result);
+    } else {
+        return;
+    }
 }
 
 /**
@@ -1229,8 +1392,8 @@ Handle<Value> bind_crypto_sign_keypair(const Arguments& args) {
  * Warning:
  *    if verification fails msg may contain data from the computation.
  */
-Handle<Value> bind_crypto_sign_open(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_sign_open) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments signedMessage and verificationKey must be buffers");
 
@@ -1240,12 +1403,14 @@ Handle<Value> bind_crypto_sign_open(const Arguments& args) {
     unsigned long long mlen = 0;
     NEW_BUFFER_AND_PTR(msg, signedMessage_size);
 
-    if( crypto_sign_open(msg_ptr, &mlen, signedMessage, signedMessage_size, publicKey) == 0) {
+    if (crypto_sign_open(msg_ptr, &mlen, signedMessage, signedMessage_size, publicKey) == 0) {
         NEW_BUFFER_AND_PTR(m, mlen);
         memcpy(m_ptr, msg_ptr, mlen);
-        return scope.Close(m->handle_);
+
+        return info.GetReturnValue().Set(m);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -1269,9 +1434,12 @@ Handle<Value> bind_crypto_sign_open(const Arguments& args) {
 * Precondition:
 *    sig must be of length crypto_sign_BYTES
 *    pk must be of length crypto_sign_PUBLICKEYBYTES
+*
+* Warning:
+*    if verification fails msg may contain data from the computation.
 */
-Handle<Value> bind_crypto_sign_verify_detached(const Arguments& args){
-    HandleScope scope;
+NAN_METHOD(bind_crypto_sign_verify_detached){
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3, "arguements signature, message and publicKey must be buffers");
 
@@ -1280,10 +1448,10 @@ Handle<Value> bind_crypto_sign_verify_detached(const Arguments& args){
     GET_ARG_AS_UCHAR_LEN(2, publicKey, crypto_sign_PUBLICKEYBYTES);
 
     if (crypto_sign_verify_detached(signature, message, message_size, publicKey) == 0){
-        return scope.Close(Boolean::New(true));
+        return info.GetReturnValue().Set(Nan::True());
+    } else {
+        return info.GetReturnValue().Set(Nan::False());
     }
-    return scope.Close(Boolean::New(false));
-
 }
 
 /**
@@ -1300,8 +1468,8 @@ Handle<Value> bind_crypto_sign_verify_detached(const Arguments& args){
 * Returns:
 *    0 if operation is successful.
 */
-Handle<Value> bind_crypto_sign_ed25519_pk_to_curve25519(const Arguments& args){
-    HandleScope scope;
+NAN_METHOD(bind_crypto_sign_ed25519_pk_to_curve25519){
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1, "arguments ed25519_pk must be a buffer");
 
@@ -1310,9 +1478,9 @@ Handle<Value> bind_crypto_sign_ed25519_pk_to_curve25519(const Arguments& args){
     NEW_BUFFER_AND_PTR(curve25519_pk, crypto_box_PUBLICKEYBYTES);
 
     if (crypto_sign_ed25519_pk_to_curve25519(curve25519_pk_ptr, ed25519_pk) == 0){
-        return scope.Close(curve25519_pk->handle_);
+        return info.GetReturnValue().Set(curve25519_pk);
     }
-    return scope.Close(Undefined());
+    return info.GetReturnValue().Set(Nan::Undefined());
 }
 
 /**
@@ -1329,8 +1497,8 @@ Handle<Value> bind_crypto_sign_ed25519_pk_to_curve25519(const Arguments& args){
 * Returns:
 *    0 if operation is successful.
 */
-Handle<Value> bind_crypto_sign_ed25519_sk_to_curve25519(const Arguments& args){
-    HandleScope scope;
+NAN_METHOD(bind_crypto_sign_ed25519_sk_to_curve25519){
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1, "arguments ed25519_sk must be a buffer");
 
@@ -1339,9 +1507,9 @@ Handle<Value> bind_crypto_sign_ed25519_sk_to_curve25519(const Arguments& args){
     NEW_BUFFER_AND_PTR(curve25519_sk, crypto_box_SECRETKEYBYTES);
 
     if (crypto_sign_ed25519_sk_to_curve25519(curve25519_sk_ptr, ed25519_sk) == 0){
-        return scope.Close(curve25519_sk->handle_);
+        return info.GetReturnValue().Set(curve25519_sk);
     }
-    return scope.Close(Undefined());
+    return info.GetReturnValue().Set(Nan::Undefined());
 }
 
 /**
@@ -1373,8 +1541,8 @@ Handle<Value> bind_crypto_sign_ed25519_sk_to_curve25519(const Arguments& args){
  *    first crypto_box_BOXZEROBYTES of ctxt be all 0.
  *    first mlen bytes of ctxt will contain the ciphertext.
  */
-Handle<Value> bind_crypto_box(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_box) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(4,"arguments message, nonce, publicKey and secretKey must be buffers");
 
@@ -1397,9 +1565,55 @@ Handle<Value> bind_crypto_box(const Arguments& args) {
     NEW_BUFFER_AND_PTR(ctxt, message_size);
 
     if( crypto_box(ctxt_ptr, msg_ptr, message_size, nonce, publicKey, secretKey) == 0) {
-        return scope.Close(ctxt->handle_);
+        return info.GetReturnValue().Set(ctxt);
     }
-    return scope.Close(Undefined());
+    return info.GetReturnValue().Set(Nan::Undefined());
+}
+
+/**
+ * Encrypts a message given the senders secret key, and receivers public key.
+ * int crypto_box_easy   (
+ *    unsigned char * ctxt,
+ *    const unsigned char * msg,
+ *    unsigned long long mlen,
+ *    const unsigned char * nonce,
+ *    const unsigned char * pk,
+ *    const unsigned char * sk)
+ *
+ * Parameters:
+ *    [out] ctxt    the buffer for the cipher-text.
+ *    [in]  msg     the message to be encrypted.
+ *    [in]  mlen    the length of msg.
+ *    [in]  nonce   a randomly generated nonce.
+ *    [in]  pk      the receivers public key, used for encryption.
+ *    [in]  sk      the senders private key, used for signing.
+ *
+ * Returns:
+ *    0 if operation is successful.
+ *
+ * Precondition:
+ *    the nonce must have size crypto_box_NONCEBYTES.
+ *
+ * Postcondition:
+ *    first mlen bytes of ctxt will contain the ciphertext.
+ */
+NAN_METHOD(bind_crypto_box_easy) {
+    Nan::EscapableHandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(4,"arguments message, nonce, publicKey and secretKey must be buffers");
+
+    GET_ARG_AS_UCHAR(0, message);
+    GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_box_NONCEBYTES);
+    GET_ARG_AS_UCHAR_LEN(2, publicKey, crypto_box_PUBLICKEYBYTES);
+    GET_ARG_AS_UCHAR_LEN(3, secretKey, crypto_box_SECRETKEYBYTES);
+
+    NEW_BUFFER_AND_PTR(ctxt, message_size + crypto_box_MACBYTES);
+
+    if (crypto_box_easy(ctxt_ptr, message, message_size, nonce, publicKey, secretKey) == 0) {
+        return info.GetReturnValue().Set(ctxt);
+    } else {
+        return;
+    }
 }
 
 /**
@@ -1424,19 +1638,22 @@ Handle<Value> bind_crypto_box(const Arguments& args) {
  *    first crypto_box_PUBLICKEYTBYTES of pk will be the key data.
  *    first crypto_box_SECRETKEYTBYTES of sk will be the key data.
  */
-Handle<Value> bind_crypto_box_keypair(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_box_keypair) {
+    Nan::EscapableHandleScope scope;
 
     NEW_BUFFER_AND_PTR(pk, crypto_box_PUBLICKEYBYTES);
     NEW_BUFFER_AND_PTR(sk, crypto_box_SECRETKEYBYTES);
 
-    if( crypto_box_keypair(pk_ptr, sk_ptr) == 0) {
-        Local<Object> result = Object::New();
-        result->Set(String::NewSymbol("publicKey"), pk->handle_);
-        result->Set(String::NewSymbol("secretKey"), sk->handle_);
-        return scope.Close(result);
+    if (crypto_box_keypair(pk_ptr, sk_ptr) == 0) {
+        Local<Object> result = Nan::New<Object>();
+
+        result->ForceSet(Nan::New<String>("publicKey").ToLocalChecked(), pk, DontDelete);
+        result->ForceSet(Nan::New<String>("secretKey").ToLocalChecked(), sk, DontDelete);
+
+        return info.GetReturnValue().Set(result);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -1469,8 +1686,8 @@ Handle<Value> bind_crypto_box_keypair(const Arguments& args) {
  *     first clen bytes of msg will contain the plaintext.
  *     first crypto_box_ZEROBYTES of msg will be all 0.
  */
-Handle<Value> bind_crypto_box_open(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_box_open) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(4,"arguments cipherText, nonce, publicKey and secretKey must be buffers");
 
@@ -1483,7 +1700,7 @@ Handle<Value> bind_crypto_box_open(const Arguments& args) {
     if( cipherText_size < crypto_box_BOXZEROBYTES ) {
         std::ostringstream oss;
         oss << "argument cipherText must have a length of at least " << crypto_box_BOXZEROBYTES << " bytes";
-        return V8Exception(oss.str().c_str());
+        return Nan::ThrowError(oss.str().c_str());
     }
 
     unsigned int i;
@@ -1493,19 +1710,74 @@ Handle<Value> bind_crypto_box_open(const Arguments& args) {
     if( i < crypto_box_BOXZEROBYTES ) {
         std::ostringstream oss;
         oss << "the first " << crypto_box_BOXZEROBYTES << " bytes of argument cipherText must be 0";
-        return V8Exception(oss.str().c_str());
+        return Nan::ThrowError(oss.str().c_str());
     }
 
     NEW_BUFFER_AND_PTR(msg, cipherText_size);
 
-    if( crypto_box_open(msg_ptr, cipherText, cipherText_size, nonce, publicKey, secretKey) == 0) {
+    if (crypto_box_open(msg_ptr, cipherText, cipherText_size, nonce, publicKey, secretKey) == 0) {
 
         // Remove the padding at the beginning of the message
         NEW_BUFFER_AND_PTR(plain_text, cipherText_size - crypto_box_ZEROBYTES);
         memcpy(plain_text_ptr,(void*) (msg_ptr + crypto_box_ZEROBYTES), cipherText_size - crypto_box_ZEROBYTES);
-        return scope.Close(plain_text->handle_);
+        return info.GetReturnValue().Set(plain_text);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
+}
+
+/**
+ * Decrypts a ciphertext ctxt given the receivers private key, and senders public key.
+ *
+ * int crypto_box_open_easy(
+ *    unsigned char *       msg,
+ *    const unsigned char * ctxt,
+ *    unsigned long long    clen,
+ *    const unsigned char * nonce,
+ *    const unsigned char * pk,
+ *    const unsigned char * sk)
+ *
+ * Parameters:
+ *     [out] msg     the buffer to place resulting plaintext.
+ *     [in]  ctxt    the ciphertext to be decrypted.
+ *     [in]  clen    the length of the ciphertext.
+ *     [in]  nonce   a randomly generated.
+ *     [in]  pk      the senders public key, used for verification.
+ *     [in]  sk      the receivers private key, used for decryption.
+ *
+ Returns:
+ *     0 if successful and -1 if verification fails.
+ *
+ Precondition:
+ *     the nonce must have size crypto_box_NONCEBYTES.
+ *
+ * Postcondition:
+ *     first clen bytes of msg will contain the plaintext.
+ */
+NAN_METHOD(bind_crypto_box_open_easy) {
+    Nan::EscapableHandleScope scope;
+
+    NUMBER_OF_MANDATORY_ARGS(4,"arguments cipherText, nonce, publicKey and secretKey must be buffers");
+
+    GET_ARG_AS_UCHAR(0, cipherText);
+    GET_ARG_AS_UCHAR_LEN(1, nonce, crypto_box_NONCEBYTES);
+    GET_ARG_AS_UCHAR_LEN(2, publicKey, crypto_box_PUBLICKEYBYTES);
+    GET_ARG_AS_UCHAR_LEN(3, secretKey, crypto_box_SECRETKEYBYTES);
+
+    // cipherText should have crypto_box_MACBYTES + encrypted message chars so lets check
+    if (cipherText_size < crypto_box_MACBYTES) {
+        std::ostringstream oss;
+        oss << "argument cipherText must have a length of at least " << crypto_box_MACBYTES << " bytes";
+        return Nan::ThrowError(oss.str().c_str());
+    }
+
+    NEW_BUFFER_AND_PTR(msg, cipherText_size - crypto_box_MACBYTES);
+
+    if( crypto_box_open_easy(msg_ptr, cipherText, cipherText_size, nonce, publicKey, secretKey) == 0) {
+        return info.GetReturnValue().Set(msg);
+    } else {
+        return;
+    }
 }
 
 /**
@@ -1525,8 +1797,8 @@ Handle<Value> bind_crypto_box_open(const Arguments& args) {
  * crypto_box_afternm and crypto_box_open_afternm, and can be reused for any
  * number of messages.
  */
-Handle<Value> bind_crypto_box_beforenm(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_box_beforenm) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments publicKey, and secretKey must be buffers");
 
@@ -1536,7 +1808,7 @@ Handle<Value> bind_crypto_box_beforenm(const Arguments& args) {
     NEW_BUFFER_AND_PTR(k, crypto_box_BEFORENMBYTES);
 
     crypto_box_beforenm(k_ptr, publicKey, secretKey);
-    return scope.Close(k->handle_);
+    return info.GetReturnValue().Set(k);
 }
 
 /**
@@ -1559,8 +1831,8 @@ Handle<Value> bind_crypto_box_beforenm(const Arguments& args) {
  * Returns:
  *    0 if operation is successful.
  */
-Handle<Value> bind_crypto_box_afternm(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_box_afternm) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments message, nonce and k must be buffers");
 
@@ -1582,9 +1854,10 @@ Handle<Value> bind_crypto_box_afternm(const Arguments& args) {
     NEW_BUFFER_AND_PTR(ctxt, message_size);
 
     if( crypto_box_afternm(ctxt_ptr, msg_ptr, message_size, nonce, k) == 0) {
-        return scope.Close(ctxt->handle_);
+        return info.GetReturnValue().Set(ctxt);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
@@ -1614,8 +1887,8 @@ Handle<Value> bind_crypto_box_afternm(const Arguments& args) {
  *    first clen bytes of msg will contain the plaintext.
  *    first crypto_box_ZEROBYTES of msg will be all 0.
  */
-Handle<Value> bind_crypto_box_open_afternm(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_box_open_afternm) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(3,"arguments cipherText, nonce, k");
 
@@ -1627,7 +1900,7 @@ Handle<Value> bind_crypto_box_open_afternm(const Arguments& args) {
     if( cipherText_size < crypto_box_BOXZEROBYTES ) {
         std::ostringstream oss;
         oss << "argument cipherText must have a length of at least " << crypto_box_BOXZEROBYTES << " bytes";
-        return V8Exception(oss.str().c_str());
+        return Nan::ThrowError(oss.str().c_str());
     }
 
     unsigned int i;
@@ -1637,7 +1910,7 @@ Handle<Value> bind_crypto_box_open_afternm(const Arguments& args) {
     if( i < crypto_box_BOXZEROBYTES ) {
         std::ostringstream oss;
         oss << "the first " << crypto_box_BOXZEROBYTES << " bytes of argument cipherText must be 0";
-        return V8Exception(oss.str().c_str());
+        return Nan::ThrowError(oss.str().c_str());
     }
 
     NEW_BUFFER_AND_PTR(msg, cipherText_size);
@@ -1648,26 +1921,28 @@ Handle<Value> bind_crypto_box_open_afternm(const Arguments& args) {
         NEW_BUFFER_AND_PTR(plain_text,cipherText_size - crypto_box_ZEROBYTES);
         memcpy(plain_text_ptr,(void*) (msg_ptr + crypto_box_ZEROBYTES), cipherText_size - crypto_box_ZEROBYTES);
 
-        return scope.Close(plain_text->handle_);
+        return info.GetReturnValue().Set(plain_text);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 /**
  * int crypto_scalarmult_base(unsigned char *q, const unsigned char *n)
  */
-Handle<Value> bind_crypto_scalarmult_base(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_scalarmult_base) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(1,"argument must be a buffer");
 
     GET_ARG_AS_UCHAR_LEN(0, n, crypto_scalarmult_SCALARBYTES);
     NEW_BUFFER_AND_PTR(q, crypto_scalarmult_BYTES);
 
-    if( crypto_scalarmult_base(q_ptr, n) == 0) {
-        return scope.Close(q->handle_);
+    if (crypto_scalarmult_base(q_ptr, n) == 0) {
+        return info.GetReturnValue().Set(q);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 
@@ -1675,8 +1950,8 @@ Handle<Value> bind_crypto_scalarmult_base(const Arguments& args) {
  * int crypto_scalarmult(unsigned char *q, const unsigned char *n,
  *                  const unsigned char *p)
  */
-Handle<Value> bind_crypto_scalarmult(const Arguments& args) {
-    HandleScope scope;
+NAN_METHOD(bind_crypto_scalarmult) {
+    Nan::EscapableHandleScope scope;
 
     NUMBER_OF_MANDATORY_ARGS(2,"arguments must be buffers");
 
@@ -1685,21 +1960,25 @@ Handle<Value> bind_crypto_scalarmult(const Arguments& args) {
 
     NEW_BUFFER_AND_PTR(q, crypto_scalarmult_BYTES);
 
-    if( crypto_scalarmult(q_ptr, n, p) == 0) {
-        return scope.Close(q->handle_);
+    if (crypto_scalarmult(q_ptr, n, p) == 0) {
+        return info.GetReturnValue().Set(q);
+    } else {
+        return;
     }
-    return scope.Close(Undefined());
 }
 
 
 #define NEW_INT_PROP(NAME) \
-    target->Set(String::NewSymbol(#NAME), Integer::New(NAME), ReadOnly)
+    Nan::ForceSet(target, Nan::New<String>(#NAME).ToLocalChecked(), Nan::New<Integer>(NAME), v8::ReadOnly);
 
 #define NEW_STRING_PROP(NAME) \
-    target->Set(String::NewSymbol(#NAME), String::New(NAME), ReadOnly)
+    Nan::ForceSet(target, Nan::New<String>(#NAME).ToLocalChecked(), Nan::New<String>(NAME).ToLocalChecked(), v8::ReadOnly);
 
 #define NEW_METHOD(NAME) \
-    NODE_SET_METHOD(target, #NAME, bind_ ## NAME)
+    Nan::SetMethod(target, #NAME, bind_ ## NAME)
+
+#define NEW_UINT_PROP(NAME) \
+    Nan::ForceSet(target, Nan::New<String>(#NAME).ToLocalChecked(), Nan::New<v8::Uint32>((uint32_t) NAME), v8::ReadOnly);
 
 void RegisterModule(Handle<Object> target) {
     // init sodium library before we do anything
@@ -1721,6 +2000,7 @@ void RegisterModule(Handle<Object> target) {
 
     // register random utilities
     NEW_METHOD(randombytes_buf);
+    Nan::SetMethod(target, "randombytes", bind_randombytes_buf);
     NEW_METHOD(randombytes_close);
     NEW_METHOD(randombytes_stir);
     NEW_METHOD(randombytes_random);
@@ -1735,6 +2015,8 @@ void RegisterModule(Handle<Object> target) {
     NEW_METHOD(crypto_hash_sha512);
     NEW_METHOD(crypto_hash_sha256);
     NEW_INT_PROP(crypto_hash_BYTES);
+    NEW_INT_PROP(crypto_hash_sha256_BYTES);
+    NEW_INT_PROP(crypto_hash_sha512_BYTES);
     //NEW_INT_PROP(crypto_hash_BLOCKBYTES); //Seems that this constant isn't available anymore
     NEW_STRING_PROP(crypto_hash_PRIMITIVE);
 
@@ -1743,14 +2025,14 @@ void RegisterModule(Handle<Object> target) {
     NEW_METHOD(crypto_pwhash_scryptsalsa208sha256_ll);
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_SALTBYTES);
     NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_STRBYTES);
-    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_SENSITIVE);
-    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE);
-    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_SENSITIVE);
-    NEW_INT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE);
+    NEW_UINT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_SENSITIVE);
+    NEW_UINT_PROP(crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE);
+    NEW_UINT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_SENSITIVE);
+    NEW_UINT_PROP(crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE);
 
     // Password-based file encryption
-    NODE_SET_METHOD(target, "encrypt_file", pw_file_encrypt);
-    NODE_SET_METHOD(target, "decrypt_file", pw_file_decrypt);
+    Nan::SetMethod(target, "encrypt_file", pw_file_encrypt);
+    Nan::SetMethod(target, "decrypt_file", pw_file_decrypt);
 
     // Auth
     NEW_METHOD(crypto_auth);
@@ -1784,20 +2066,25 @@ void RegisterModule(Handle<Object> target) {
     // Secret Box
     NEW_METHOD(crypto_secretbox);
     NEW_METHOD(crypto_secretbox_open);
+    NEW_METHOD(crypto_secretbox_easy);
+    NEW_METHOD(crypto_secretbox_open_easy);
     NEW_INT_PROP(crypto_secretbox_BOXZEROBYTES);
     NEW_INT_PROP(crypto_secretbox_KEYBYTES);
     NEW_INT_PROP(crypto_secretbox_NONCEBYTES);
     NEW_INT_PROP(crypto_secretbox_ZEROBYTES);
+    NEW_STRING_PROP(crypto_secretbox_PRIMITIVE);
 
     // Sign
     NEW_METHOD(crypto_sign);
     NEW_METHOD(crypto_sign_detached);
     NEW_METHOD(crypto_sign_keypair);
+    NEW_METHOD(crypto_sign_seed_keypair);
     NEW_METHOD(crypto_sign_open);
     NEW_METHOD(crypto_sign_verify_detached);
     NEW_INT_PROP(crypto_sign_BYTES);
     NEW_INT_PROP(crypto_sign_PUBLICKEYBYTES);
     NEW_INT_PROP(crypto_sign_SECRETKEYBYTES);
+    NEW_STRING_PROP(crypto_sign_PRIMITIVE);
 
     //Ed25519 -> Curve25519 translation
     NEW_METHOD(crypto_sign_ed25519_pk_to_curve25519);
@@ -1805,8 +2092,10 @@ void RegisterModule(Handle<Object> target) {
 
     // Box
     NEW_METHOD(crypto_box);
+    NEW_METHOD(crypto_box_easy);
     NEW_METHOD(crypto_box_keypair);
     NEW_METHOD(crypto_box_open);
+    NEW_METHOD(crypto_box_open_easy);
     NEW_METHOD(crypto_box_beforenm);
     NEW_METHOD(crypto_box_afternm);
     NEW_METHOD(crypto_box_open_afternm);
