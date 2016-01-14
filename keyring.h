@@ -4,11 +4,13 @@
 #include <string>
 
 #include <node.h>
+#include <nan.h>
 
 class KeyRing : public node::ObjectWrap{
 
 public:
-	static void Init(v8::Handle<v8::Object> exports);
+	//static void Init(v8::Handle<v8::Object> exports);
+	static NAN_MODULE_INIT(Init);
 
 private:
 	explicit KeyRing(std::string const& filename = "", unsigned char* password = 0, size_t passwordSize = 0);
@@ -21,6 +23,8 @@ private:
 	unsigned char* _altPublicKey;
 	std::string _keyType;
 	bool _keyLock;
+	v8::Local<v8::Object> globalObj;
+	v8::Local<v8::Function> bufferConstructor;
 	/*
 	* Internal methods
 	*/
@@ -38,24 +42,27 @@ private:
 	//private PubKeyInfo object constructor
 	v8::Local<v8::Object> PPublicKeyInfo();
 
+	static inline Nan::Persistent<v8::Function> & constructor() {
+		static Nan::Persistent<v8::Function> my_constructor;
+		return my_constructor;
+	}
 
 	/*
 	* JS Methods
 	*/
-	static v8::Handle<v8::Value> New(const v8::Arguments& args);
-	static v8::Handle<v8::Value> Encrypt(const v8::Arguments& args);
-	static v8::Handle<v8::Value> Decrypt(const v8::Arguments& args);
-	static v8::Handle<v8::Value> Sign(const v8::Arguments &args);
-	static v8::Handle<v8::Value> Agree(const v8::Arguments &args);
-	static v8::Handle<v8::Value> PublicKeyInfo(const v8::Arguments& args);
-	static v8::Handle<v8::Value> CreateKeyPair(const v8::Arguments& args);
-	static v8::Handle<v8::Value> Load(const v8::Arguments& args);
-	static v8::Handle<v8::Value> Save(const v8::Arguments& args);
-	static v8::Handle<v8::Value> Clear(const v8::Arguments& args);
-	static v8::Handle<v8::Value> SetKeyBuffer(const v8::Arguments& args);
-	static v8::Handle<v8::Value> GetKeyBuffer(const v8::Arguments& args);
-	static v8::Handle<v8::Value> LockKeyBuffer(const v8::Arguments& args);
-	static v8::Persistent<v8::Function> constructor;
+	static NAN_METHOD(New);
+	static NAN_METHOD(Encrypt);
+	static NAN_METHOD(Decrypt);
+	static NAN_METHOD(Sign);
+	static NAN_METHOD(Agree);
+	static NAN_METHOD(PublicKeyInfo);
+	static NAN_METHOD(CreateKeyPair);
+	static NAN_METHOD(Load);
+	static NAN_METHOD(Save);
+	static NAN_METHOD(Clear);
+	static NAN_METHOD(SetKeyBuffer);
+	static NAN_METHOD(GetKeyBuffer);
+	static NAN_METHOD(LockKeyBuffer);
 };
 
 #endif

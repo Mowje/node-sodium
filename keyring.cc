@@ -24,47 +24,46 @@ using namespace node;
 using namespace std;
 
 #define PREPARE_FUNC_VARS() \
-	HandleScope scope; \
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This()); \
-	Local<Object> globalObj = Context::GetCurrent()->Global();
+	Nan::EscapableHandleScope scope; \
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(info.This());
 
 //Defining "invlid number of parameters" macro
 #define MANDATORY_ARGS(n, message) \
-	if (args.Length() < n){ \
-		ThrowException(Exception::TypeError(String::New(message))); \
-		return scope.Close(Undefined()); \
+	if (info.Length() < n){ \
+		Nan::ThrowError(message); \
+		info.GetReturnValue().Set(Nan::Undefined()); \
+		return; \
 	}
 
 #define CHECK_KEYPAIR(type) \
 	if (instance->_keyType == ""){ \
-		ThrowException(Exception::TypeError(String::New("No key pair has been loaded into the key ring"))); \
-		return scope.Close(Undefined()); \
+		Nan::ThrowTypeError("No key pair has been loaded into the key ring"); \
+		info.GetReturnValue().Set(Nan::Undefined()); \
+		return; \
 	} \
 	if (instance->_keyType != type){ \
-		ThrowException(Exception::TypeError(String::New("Invalid key type"))); \
-		return scope.Close(Undefined()); \
+		Nan::ThrowTypeError("Invalid key type"); \
+		info.GetReturnValue().Set(Nan::Undefined()); \
+		return; \
 	}
 
 #define BUILD_BUFFER_STRING(name, str) \
 	unsigned int name ## _size = str.length(); \
-	Buffer* name = Buffer::New(name ## _size); \
-	memcpy(Buffer::Data(name), str.c_str(), name ## _size); \
-	Local<Function> bufferConstructor = Local<Function>::Cast(globalObj->Get(String::New("Buffer"))); \
-	Handle<Value> constructorArgs[3] = { name->handle_, Integer::New(name ## _size), Integer::New(0) }; \
-	Local<Object> name ## _buffer = bufferConstructor->NewInstance(3, constructorArgs);
+	unsigned char* name ## _ptr = new unsigned char[str.length()]; \
+	memcpy(name ## _ptr, str.c_str(), str.length()); \
+	Local<Object> name = Nan::NewBuffer((char*) name ## _ptr, name ## _size).ToLocalChecked();
+	//unsigned char* name ## _ptr = (unsigned char*)Buffer::Data(name);
 
 #define BUILD_BUFFER_CHAR(name, data, size) \
 	unsigned int name ## _size = size; \
-	Buffer* name = Buffer::New(name ## _size); \
-	memcpy(Buffer::Data(name), data, name ## _size); \
-	Local<Function> bufferConstructor = Local<Function>::Cast(globalObj->Get(String::New("Buffer"))); \
-	Handle<Value> constructorArgs[3] = {name->handle_, Integer::New(name ## _size), Integer::New(0) }; \
-	Local<Object> name ## _buffer = bufferConstructor->NewInstance(3, constructorArgs);
+	Local<Object> name = Nan::NewBuffer(data, name ## _size).ToLocalChecked(); \
+	unsigned char* name ## _ptr = (unsigned char*)Buffer::Data(name);
 
 #define BIND_METHOD(name, function) \
-	tpl->PrototypeTemplate()->Set(String::NewSymbol(name), FunctionTemplate::New(function)->GetFunction());
+	Nan::SetPrototypeMethod(tpl, name, function);
+	//tpl->PrototypeTemplate()->Set(String::NewSymbol(name), FunctionTemplate::New(function)->GetFunction());
 
-Persistent<Function> KeyRing::constructor;
+//Persistent<Function> KeyRing::constructor;
 
 KeyRing::KeyRing(string const& filename, unsigned char* password, size_t passwordSize) : _filename(filename), _privateKey(0), _publicKey(0), _altPrivateKey(0), _altPublicKey(0){
 	_keyLock = false;
@@ -76,23 +75,40 @@ KeyRing::KeyRing(string const& filename, unsigned char* password, size_t passwor
 		loadKeyPair(filename, &_keyType, _privateKey, _publicKey, password, passwordSize);
 		_filename = filename;
 	}
+	globalObj = Nan::GetCurrentContext()->Global();
+	bufferConstructor = Local<Function>::Cast(globalObj->Get(Nan::New<String>("Buffer").ToLocalChecked()));
 }
 
 KeyRing::~KeyRing(){
 	if (_privateKey != 0){
+		if (_keyType == "ed25519") sodium_memzero(_privateKey, crypto_sign_SECRETKEYBYTES);
+		else sodium_memzero(_privateKey, crypto_box_SECRETKEYBYTES);
 		delete _privateKey;
 		_privateKey = 0;
 	}
 	if (_publicKey != 0){
+		if (_keyType == "ed25519") sodium_memzero(_publicKey, crypto_sign_PUBLICKEYBYTES);
+		else sodium_memzero(_publicKey, crypto_box_PUBLICKEYBYTES);
 		delete _publicKey;
 		_publicKey = 0;
 	}
+	//Note : altKeys are always curve25519
+	if (_altPrivateKey != 0){
+		sodium_memzero(_altPrivateKey, crypto_box_SECRETKEYBYTES);
+		delete _altPrivateKey;
+		_altPrivateKey = 0;
+	}
+	if (_altPublicKey != 0){
+		sodium_memzero(_altPublicKey, crypto_box_PUBLICKEYBYTES);
+		delete _altPublicKey;
+		_altPublicKey = 0;
+	}
 }
 
-void KeyRing::Init(Handle<Object> exports){
+NAN_MODULE_INIT(KeyRing::Init){
 	//Prepare constructor template
-	Local<FunctionTemplate> tpl = FunctionTemplate::New(New);
-	tpl->SetClassName(String::NewSymbol("KeyRing"));
+	Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(KeyRing::New);
+	tpl->SetClassName(Nan::New("KeyRing").ToLocalChecked());
 	tpl->InstanceTemplate()->SetInternalFieldCount(4);
 	//Prototype
 	BIND_METHOD("encrypt", Encrypt);
@@ -108,59 +124,70 @@ void KeyRing::Init(Handle<Object> exports){
 	BIND_METHOD("getKeyBuffer", GetKeyBuffer);
 	BIND_METHOD("lockKeyBuffer", LockKeyBuffer);
 
-	constructor = Persistent<Function>::New(tpl->GetFunction());
-	exports->Set(String::NewSymbol("KeyRing"), constructor);
+	constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
+	Nan::Set(target, Nan::New("KeyRing").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
+
+	//cout << "KeyRing::Init" << endl;
 }
 
 /*
 * JS -> C++ data constructor bridge
 * Parameter : String filename [optional]
 */
-Handle<Value> KeyRing::New(const Arguments& args){
+NAN_METHOD(KeyRing::New){
 	HandleScope scope;
-	if (args.IsConstructCall()){
+	//cout << "KeyRing::New ";
+	if (info.IsConstructCall()){
+		//cout << "ConstructCall" << endl;
 		//Invoked as a constructor
 		string filename;
 		unsigned char* password = 0;
 		size_t passwordSize = 0;
-		if (args[0]->IsUndefined()){
+		if (info[0]->IsUndefined()){
 			filename = "";
 		} else {
-			String::Utf8Value filenameVal(args[0]->ToString());
+			String::Utf8Value filenameVal(info[0]->ToString());
 			filename = string(*filenameVal);
 		}
-		if (args.Length() > 1 && !args[1]->IsUndefined()){
+		if (info.Length() > 1 && !info[1]->IsUndefined()){
 			//Casting password
-			Local<Object> passwordVal = args[1]->ToObject();
+			Local<Object> passwordVal = info[1]->ToObject();
 
 			password = (unsigned char*) Buffer::Data(passwordVal);
 			passwordSize = Buffer::Length(passwordVal);
 		}
 		KeyRing* newInstance = new KeyRing(filename, password, passwordSize);
-		newInstance->Wrap(args.This());
-		return args.This();
+		newInstance->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
 	} else {
 		//Invoked as a plain function; turn it into construct call
-		if (args.Length() > 2){
-			ThrowException(Exception::TypeError(String::New("Invalid number of arguments on KeyRing constructor call")));
-			return scope.Close(Undefined());
+		//cout << "Plain call" << endl;
+		if (info.Length() > 2){
+			Nan::ThrowTypeError("Invalid number of arguments on KeyRing constructor call");
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		}
-		if (args.Length() > 0){
-			unsigned int argsLength = args.Length();
+		Local<Function> cons = Nan::New(constructor());
+
+		if (info.Length() > 0){
+			unsigned int infoLength = info.Length();
 			Local<Value> * argvPtr = NULL;
-			if (argsLength == 1){
-				Local<Value> argv[1] = {args[0]};
+			if (infoLength == 1){
+				Local<Value> argv[1] = {info[0]};
 				argvPtr = argv;
-			} else if (argsLength == 2){
-				Local<Value> argv[2] = {args[0], args[1]};
+			} else if (infoLength == 2){
+				Local<Value> argv[2] = {info[0], info[1]};
 				argvPtr = argv;
 			}
-			return scope.Close(constructor->NewInstance(argsLength, argvPtr));
-		} else return scope.Close(constructor->NewInstance());
+			info.GetReturnValue().Set(Nan::NewInstance(cons, infoLength, argvPtr).ToLocalChecked());
+		} else {
+			Local<Value> argv[0] = {};
+			info.GetReturnValue().Set(Nan::NewInstance(cons, 0, argv).ToLocalChecked());
+		}
 
 
-		/*if (args.Length() == 1){
-			Local<Value> argv[1] = { args[0] };
+		/*if (info.Length() == 1){
+			Local<Value> argv[1] = { info[0] };
 			return scope.Close(constructor->NewInstance(1, argv));
 		} else {
 			return scope.Close(constructor->NewInstance());
@@ -173,14 +200,14 @@ Handle<Value> KeyRing::New(const Arguments& args){
 * Parameters Buffer message, Buffer publicKey, Buffer nonce, callback (optional)
 * Returns Buffer
 */
-Handle<Value> KeyRing::Encrypt(const Arguments& args){
+NAN_METHOD(KeyRing::Encrypt){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(3, "Mandatory args : message, counterpartPubKey, nonce\nOptional args: callback");
 	//CHECK_KEYPAIR("curve25519");
 
-	Local<Object> messageVal = args[0]->ToObject();
-	Local<Object> publicKeyVal = args[1]->ToObject();
-	Local<Object> nonceVal = args[2]->ToObject();
+	Local<Object> messageVal = info[0]->ToObject();
+	Local<Object> publicKeyVal = info[1]->ToObject();
+	Local<Object> nonceVal = info[2]->ToObject();
 
 	const unsigned char* message = (unsigned char*) Buffer::Data(messageVal);
 	const size_t messageLength = Buffer::Length(messageVal);
@@ -190,16 +217,18 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 	if (publicKeyLength != crypto_box_PUBLICKEYBYTES){
 		stringstream errMsg;
 		errMsg << "Public key must be " << crypto_box_PUBLICKEYBYTES << " bytes long";
-		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError(errMsg.str().c_str());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 	const unsigned char* nonce = (unsigned char*) Buffer::Data(nonceVal);
 	const size_t nonceLength = Buffer::Length(nonceVal);
 	if (nonceLength != crypto_box_NONCEBYTES){
 		stringstream errMsg;
 		errMsg << "The nonce must be " << crypto_box_NONCEBYTES << " bytes long";
-		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError(errMsg.str().c_str());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	unsigned char* paddedMessage = new unsigned char[messageLength + crypto_box_ZEROBYTES];
@@ -208,7 +237,7 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 	}
 	memcpy((void*) (paddedMessage + crypto_box_ZEROBYTES), (void*) message, messageLength);
 
-	Buffer* cipherBuf = Buffer::New(messageLength + crypto_box_ZEROBYTES);
+	Local<Object> cipherBuf = Nan::NewBuffer(messageLength + crypto_box_ZEROBYTES).ToLocalChecked();
 	unsigned char* cipher = (unsigned char*)Buffer::Data(cipherBuf);
 
 	int boxResult;
@@ -220,20 +249,22 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while encrypting message. Error code : " << boxResult;
-		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError(errMsg.str().c_str());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	//BUILD_BUFFER(string((char*) cipher, message.length()).c_str());
-	if (!(args.Length() > 3 && args[3]->IsFunction())){
-		return scope.Close(cipherBuf->handle_);
+	if (!(info.Length() > 3 && info[3]->IsFunction())){
+		info.GetReturnValue().Set(cipherBuf);
 	} else {
-		BUILD_BUFFER_CHAR(result, (char*)cipher, messageLength + crypto_box_ZEROBYTES);
-		Local<Function> callback = Local<Function>::Cast(args[3]);
+		//BUILD_BUFFER_CHAR(result, (char*)cipher, messageLength + crypto_box_ZEROBYTES);
+		Local<Function> callback = Local<Function>::Cast(info[3]);
 		const int argc = 1;
-		Local<Value> argv[argc] = { result_buffer };
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		Local<Value> argv[argc] = { cipherBuf };
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 }
 
@@ -241,14 +272,14 @@ Handle<Value> KeyRing::Encrypt(const Arguments& args){
 * Decrypt a message, using crypto_box_open
 * Args : Buffer cipher, Buffer publicKey, Buffer nonce, Function callback (optional)
 */
-Handle<Value> KeyRing::Decrypt(const Arguments& args){
+NAN_METHOD(KeyRing::Decrypt){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(3, "Mandatory args : cipher, counterpartPubKey, nonce\nOptional args: callback");
 	//CHECK_KEYPAIR("curve25519");
 
-	Local<Object> cipherVal = args[0]->ToObject();
-	Local<Object> publicKeyVal = args[1]->ToObject();
-	Local<Object> nonceVal = args[2]->ToObject();
+	Local<Object> cipherVal = info[0]->ToObject();
+	Local<Object> publicKeyVal = info[1]->ToObject();
+	Local<Object> nonceVal = info[2]->ToObject();
 
 	const unsigned char* cipher = (unsigned char*) Buffer::Data(cipherVal);
 	const size_t cipherLength = Buffer::Length(cipherVal);
@@ -261,8 +292,9 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 	if (i < crypto_box_BOXZEROBYTES){
 		stringstream errMsg;
 		errMsg << "The first " << crypto_box_BOXZEROBYTES << " bytes of the cipher argument must be zeros";
-		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError(errMsg.str().c_str());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	const unsigned char* publicKey = (unsigned char*) Buffer::Data(publicKeyVal);
@@ -280,23 +312,26 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 	if (boxResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while decrypting message. Error code : " << boxResult;
-		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError(errMsg.str().c_str());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	unsigned char* plaintext = new unsigned char[cipherLength - crypto_box_ZEROBYTES];
 	memcpy(plaintext, (void*) (message + crypto_box_ZEROBYTES), cipherLength - crypto_box_ZEROBYTES);
 
 
-	BUILD_BUFFER_CHAR(result, (char*)plaintext, cipherLength - crypto_box_ZEROBYTES);
-	if (!(args.Length() > 3 && args[3]->IsFunction())){
-		return scope.Close(result_buffer);
+	//BUILD_BUFFER_CHAR(result, (char*)plaintext, cipherLength - crypto_box_ZEROBYTES);
+	if (!(info.Length() > 3 && info[3]->IsFunction())){
+		info.GetReturnValue().Set(Nan::NewBuffer((char*) plaintext, cipherLength - crypto_box_ZEROBYTES).ToLocalChecked());
+		return;
 	} else {
-		Local<Function> callback = Local<Function>::Cast(args[3]);
+		Local<Function> callback = Local<Function>::Cast(info[3]);
 		const int argc = 1;
-		Local<Value> argv[argc] = { result_buffer };
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		Local<Value> argv[argc] = { Nan::NewBuffer((char*) plaintext, cipherLength - crypto_box_ZEROBYTES).ToLocalChecked() };
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 }
 
@@ -304,24 +339,24 @@ Handle<Value> KeyRing::Decrypt(const Arguments& args){
 * Sign a given message, using crypto_sign
 * Args: Buffer message, Function callback (optional), Boolean detachedSignature
 */
-Handle<Value> KeyRing::Sign(const Arguments& args){
+NAN_METHOD(KeyRing::Sign){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : message\nOptional args: callback, detachedSignature");
 	CHECK_KEYPAIR("ed25519");
 
-	Local<Value> messageVal = args[0]->ToObject();
+	Local<Value> messageVal = info[0]->ToObject();
 
 	const unsigned char* message = (unsigned char*) Buffer::Data(messageVal);
 	const size_t messageLength = Buffer::Length(messageVal);
 
 	bool detachedSignature = false;
-	if (args.Length() > 2){
-		Local<Boolean> detachedSignatureVal = args[2]->ToBoolean();
+	if (info.Length() > 2){
+		Local<Boolean> detachedSignatureVal = info[2]->ToBoolean();
 		detachedSignature = detachedSignatureVal->Value();
 	}
 
 	unsigned long long signatureSize = (detachedSignature ? crypto_sign_BYTES : messageLength + crypto_sign_BYTES);
-	Buffer* signatureBuf = Buffer::New(signatureSize);
+	Local<Object> signatureBuf = Nan::NewBuffer(signatureSize).ToLocalChecked();
 	unsigned char* signature = (unsigned char*) Buffer::Data(signatureBuf);
 
 	int signResult;
@@ -333,21 +368,24 @@ Handle<Value> KeyRing::Sign(const Arguments& args){
 	if (signResult != 0){
 		stringstream errMsg;
 		errMsg << "Error while signing the message. Code : " << signResult << endl;
-		ThrowException(Exception::TypeError(String::New(errMsg.str().c_str())));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError(errMsg.str().c_str());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	//BUILD_BUFFER(string((char*) signature, messageLength + crypto_sign_BYTES).c_str());
 
-	if (!(args.Length() > 1 && args[1]->IsFunction())){
-		return scope.Close(signatureBuf->handle_);
+	if (!(info.Length() > 1 && info[1]->IsFunction())){
+		info.GetReturnValue().Set(signatureBuf);
+		return;
 	} else {
-		BUILD_BUFFER_CHAR(result, (char*) signature, signatureSize);
-		Local<Function> callback = Local<Function>::Cast(args[1]);
+		//BUILD_BUFFER_CHAR(result, (char*) signature, signatureSize);
+		Local<Function> callback = Local<Function>::Cast(info[1]);
 		const int argc = 1;
-		Local<Value> argv[argc] = { result_buffer };
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		Local<Value> argv[argc] = { signatureBuf };
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 }
 
@@ -355,15 +393,15 @@ Handle<Value> KeyRing::Sign(const Arguments& args){
 * Do a Curve25519 key-exchange
 * Args : Buffer counterpartPubKey, Function callback (optional)
 */
-Handle<Value> KeyRing::Agree(const Arguments& args){
+NAN_METHOD(KeyRing::Agree){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : counterpartPubKey\nOptional: callback");
 	//CHECK_KEYPAIR("curve25519");
 
-	Local<Object> publicKeyVal = args[0]->ToObject();
+	Local<Object> publicKeyVal = info[0]->ToObject();
 	const unsigned char* counterpartPubKey = (unsigned char*) Buffer::Data(publicKeyVal);
 
-	Buffer* sharedSecretBuf = Buffer::New(crypto_scalarmult_BYTES);
+	Local<Object> sharedSecretBuf = Nan::NewBuffer(crypto_scalarmult_BYTES).ToLocalChecked();
 	unsigned char* sharedSecret = (unsigned char*) Buffer::Data(sharedSecretBuf);
 	if (instance->_keyType == "curve25519"){
 		crypto_scalarmult(sharedSecret, instance->_privateKey, counterpartPubKey);
@@ -371,35 +409,40 @@ Handle<Value> KeyRing::Agree(const Arguments& args){
 		crypto_scalarmult(sharedSecret, instance->_altPrivateKey, counterpartPubKey);
 	}
 
-	if (!(args.Length() > 1 && args[1]->IsFunction())){
-		return scope.Close(sharedSecretBuf->handle_);
+	if (!(info.Length() > 1 && info[1]->IsFunction())){
+		info.GetReturnValue().Set(sharedSecretBuf);
+		return;
 	} else {
-		BUILD_BUFFER_CHAR(result, (char*) sharedSecret, crypto_scalarmult_BYTES);
-		Local<Function> callback = Local<Function>::Cast(args[1]);
+		//BUILD_BUFFER_CHAR(result, (char*) sharedSecret, crypto_scalarmult_BYTES);
+		Local<Function> callback = Local<Function>::Cast(info[1]);
 		const int argc = 1;
-		Local<Value> argv[argc] = { result_buffer };
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		Local<Value> argv[argc] = { sharedSecretBuf };
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 }
 
 //Function callback (optional)
-Handle<Value> KeyRing::PublicKeyInfo(const Arguments& args){
+NAN_METHOD(KeyRing::PublicKeyInfo){
 	PREPARE_FUNC_VARS();
 	//Checking that a keypair is loaded in memory
 	if (instance->_keyType == "" || instance->_privateKey == 0 || instance->_publicKey == 0){
-		ThrowException(Exception::TypeError(String::New("No key has been loaded into memory")));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError("No key has been loaded into memory");
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 	//Sync/async fork
-	if (!(args.Length() > 0 && args[0]->IsFunction())){
-		return scope.Close(instance->PPublicKeyInfo());
+	if (!(info.Length() > 0 && info[0]->IsFunction())){
+		info.GetReturnValue().Set(instance->PPublicKeyInfo());
+		return;
 	} else {
-		Local<Function> callback = Local<Function>::Cast(args[0]);
+		Local<Function> callback = Local<Function>::Cast(info[0]);
 		const unsigned argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 }
 
@@ -425,14 +468,15 @@ Local<Object> KeyRing::PPublicKeyInfo(){
 * Generates a keypair. Save it to filename if given
 * String keyType, String filename [optional], Function callback [optional], Buffer passoword [optional], Number opsLimit [optional], Number r [optional], Number p [optional]
 */
-Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
+NAN_METHOD(KeyRing::CreateKeyPair){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Please give the type of the key you want to generate");
-	String::Utf8Value keyTypeVal(args[0]->ToString());
+	String::Utf8Value keyTypeVal(info[0]->ToString());
 	string keyType(*keyTypeVal);
 	if (!(keyType == "ed25519" || keyType == "curve25519")) {
-		ThrowException(Exception::TypeError(String::New("Invalid key type")));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError("Invalid key type");
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 	//Delete the keypair loaded in memory, part by part, if any
 	if (instance->_privateKey != 0){
@@ -484,48 +528,50 @@ Handle<Value> KeyRing::CreateKeyPair(const Arguments& args){
 		instance->_keyType = "curve25519";
 	}
 
-	if (args.Length() >= 2 && !args[1]->IsUndefined()){ //Save keypair to file
-		String::Utf8Value filenameVal(args[1]->ToString());
+	if (info.Length() >= 2 && !info[1]->IsUndefined()){ //Save keypair to file
+		String::Utf8Value filenameVal(info[1]->ToString());
 		string filename(*filenameVal);
-		if (args.Length() > 3 && !args[3]->IsUndefined()){
-			Local<Value> passwordVal = args[3]->ToObject();
+		if (info.Length() > 3 && !info[3]->IsUndefined()){
+			Local<Value> passwordVal = info[3]->ToObject();
 			const unsigned char* password = (unsigned char*) Buffer::Data(passwordVal);
 			const size_t passwordSize = Buffer::Length(passwordVal);
-			if (args.Length() > 4){
+			if (info.Length() > 4){
 				unsigned long opsLimit = 16384;
 				unsigned short r = 8;
 				unsigned short p = 1;
-				if (args[4]->IsNumber()){
-					opsLimit = (unsigned long) args[4]->IntegerValue();
+				if (info[4]->IsNumber()){
+					opsLimit = (unsigned long) info[4]->IntegerValue();
 				}
-				if (args.Length() > 5 && args[5]->IsNumber()){
-					r = (unsigned short) args[4]->Int32Value();
+				if (info.Length() > 5 && info[5]->IsNumber()){
+					r = (unsigned short) info[4]->Int32Value();
 				}
-				if (args.Length() > 6 && args[6]->IsNumber()){
-					p = (unsigned short) args[5]->Int32Value();
+				if (info.Length() > 6 && info[6]->IsNumber()){
+					p = (unsigned short) info[5]->Int32Value();
 				}
 				saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey, password, passwordSize, opsLimit, r, p);
 			} else saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey, password, passwordSize);
 		} else saveKeyPair(filename, keyType, instance->_privateKey, instance->_publicKey);
 		instance->_filename = filename;
 	}
-	if (args.Length() >= 3 && args[3]->IsFunction()){ //Callback
-		Local<Function> callback = Local<Function>::Cast(args[2]);
+	if (info.Length() >= 3 && info[3]->IsFunction()){ //Callback
+		Local<Function> callback = Local<Function>::Cast(info[2]);
 		const unsigned argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	} else {
-		return scope.Close(instance->PPublicKeyInfo());
+		info.GetReturnValue().Set(instance->PPublicKeyInfo());
+		return;
 	}
 }
 
 // String filename, Function callback (optional), password, maxOpsLimit
-Handle<Value> KeyRing::Load(const Arguments& args){
+NAN_METHOD(KeyRing::Load){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : String filename\nOptional args : Function callback");
 
-	String::Utf8Value filenameVal(args[0]->ToString());
+	String::Utf8Value filenameVal(info[0]->ToString());
 	string filename(*filenameVal);
 
 	if (instance->_privateKey != 0){
@@ -564,16 +610,16 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 		instance->_privateKey = new unsigned char[crypto_sign_SECRETKEYBYTES];
 		instance->_publicKey = new unsigned char[crypto_sign_PUBLICKEYBYTES];
 	} else {
-		ThrowException(Exception::TypeError(String::New("Invalid key file")));
+		Nan::ThrowTypeError("Invalid key file");
 	}
 
-	if (args.Length() > 2){
-		Local<Value> passwordVal = args[2]->ToObject();
+	if (info.Length() > 2){
+		Local<Value> passwordVal = info[2]->ToObject();
 		const unsigned char* password = (unsigned char*) Buffer::Data(passwordVal);
 		const size_t passwordSize = Buffer::Length(passwordVal);
 		unsigned long maxOpsLimit = 4194304;
-		if (args.Length() > 3 && args[3]->IsNumber()){
-			maxOpsLimit = (unsigned long) args[3]->IntegerValue();
+		if (info.Length() > 3 && info[3]->IsNumber()){
+			maxOpsLimit = (unsigned long) info[3]->IntegerValue();
 			//cout << "MaxOpsLimit: " << maxOpsLimit << endl;
 		}
 
@@ -581,10 +627,12 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 			loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey, password, passwordSize, maxOpsLimit);
 		} catch (runtime_error* e){
 			ThrowException(Exception::Error(String::New(e->what())));
-			return scope.Close(Undefined());
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		} catch (void* e){
 			ThrowException(Exception::Error(String::New("Error while loading the encrypted key file")));
-			return scope.Close(Undefined());
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		}
 
 	} else {
@@ -592,10 +640,12 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 			loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey);
 		} catch (runtime_error* e){
 			ThrowException(Exception::Error(String::New(e->what())));
-			return scope.Close(Undefined());
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		} catch (void* e){
 			ThrowException(Exception::Error(String::New("Error while loading the key file")));
-			return scope.Close(Undefined());
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		}
 	}
 
@@ -609,73 +659,84 @@ Handle<Value> KeyRing::Load(const Arguments& args){
 
 	instance->PPublicKeyInfo();
 
-	if (args.Length() == 1){
-		return scope.Close( instance->PPublicKeyInfo() );
+	if (info.Length() == 1){
+		info.GetReturnValue().Set( instance->PPublicKeyInfo() );
+		return;
 	} else {
-		if (!args[1]->IsFunction()) return scope.Close( instance->PPublicKeyInfo() );
-		Local<Function> callback = Local<Function>::Cast(args[1]);
+		if (!info[1]->IsFunction()){
+			info.GetReturnValue().Set( instance->PPublicKeyInfo() );
+			return;
+		}
+		Local<Function> callback = Local<Function>::Cast(info[1]);
 		const int argc = 1;
 		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 }
 
 // String filename, Function callback (optional), Buffer password (optional), Number opsLimit (optional), Number r (optional), Number p (optional)
-Handle<Value> KeyRing::Save(const Arguments& args){
+NAN_METHOD(KeyRing::Save){
 	PREPARE_FUNC_VARS();
 	MANDATORY_ARGS(1, "Mandatory args : String filename\nOptional args : Function callback");
 
 	if (instance->_keyType == "" || instance->_publicKey == 0 || instance->_privateKey == 0){ //Checking that a key is indeed defined. If not, throw an exception
-		ThrowException(Exception::TypeError(String::New("No key has been loaded into the keyring")));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError("No key has been loaded into the keyring");
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
-	String::Utf8Value filenameVal(args[0]);
+	String::Utf8Value filenameVal(info[0]);
 	string filename(*filenameVal);
 
-	if (args.Length() > 2){
-		if (args[2]->IsUndefined()){
-			ThrowException(Exception::TypeError(String::New("When using encryption, the password can't be null")));
-			return scope.Close(Undefined());
+	if (info.Length() > 2){
+		if (info[2]->IsUndefined()){
+			Nan::ThrowTypeError("When using encryption, the password can't be null");
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		}
 
-		Local<Value> passwordVal = args[2]->ToObject();
+		Local<Value> passwordVal = info[2]->ToObject();
 		const unsigned char* password = (unsigned char*) Buffer::Data(passwordVal);
 		const size_t passwordSize = Buffer::Length(passwordVal);
 
-		if (args.Length() > 3){
+		if (info.Length() > 3){
 			//Additional scrypt parameters
 			unsigned long opsLimit = 16384;
 			unsigned short r = 8;
 			unsigned short p = 1;
-			if (args[3]->IsNumber()){
-				opsLimit = (unsigned long) args[3]->IntegerValue();
+			if (info[3]->IsNumber()){
+				opsLimit = (unsigned long) info[3]->IntegerValue();
 			}
-			if (args.Length() > 4 && args[4]->IsNumber()){
-				r = (unsigned short) args[4]->Int32Value();
+			if (info.Length() > 4 && info[4]->IsNumber()){
+				r = (unsigned short) info[4]->Int32Value();
 			}
-			if (args.Length() > 5 && args[5]->IsNumber()){
-				p = (unsigned short) args[5]->Int32Value();
+			if (info.Length() > 5 && info[5]->IsNumber()){
+				p = (unsigned short) info[5]->Int32Value();
 			}
 			try {
 				saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey, password, passwordSize, opsLimit, r, p);
 			} catch (runtime_error* e){
 				ThrowException(Exception::Error(String::New(e->what())));
-				return scope.Close(Undefined());
+				info.GetReturnValue().Set(Nan::Undefined());
+				return;
 			} catch (void* e){
 				ThrowException(Exception::Error(String::New("Error while saving the encrypted key file")));
-				return scope.Close(Undefined());
+				info.GetReturnValue().Set(Nan::Undefined());
+				return;
 			}
 		} else {
 			try {
 				saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey, password, passwordSize);
 			} catch (runtime_error* e){
 				ThrowException(Exception::Error(String::New(e->what())));
-				return scope.Close(Undefined());
+				info.GetReturnValue().Set(Nan::Undefined());
+				return;
 			} catch (void* e){
 				ThrowException(Exception::Error(String::New("Error while saving the encrypted key file")));
-				return scope.Close(Undefined());
+				info.GetReturnValue().Set(Nan::Undefined());
+				return;
 			}
 		}
 
@@ -684,27 +745,31 @@ Handle<Value> KeyRing::Save(const Arguments& args){
 			saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey);
 		} catch (runtime_error* e){
 			ThrowException(Exception::Error(String::New(e->what())));
-			return scope.Close(Undefined());
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		} catch (void* e){
 			ThrowException(Exception::Error(String::New("Error while saving the key file")));
-			return scope.Close(Undefined());
+			info.GetReturnValue().Set(Nan::Undefined());
+			return;
 		}
 	}
 
-	if (args.Length() == 1 || (args.Length() > 1 && !args[1]->IsFunction())){
-		return scope.Close(Undefined());
+	if (info.Length() == 1 || (info.Length() > 1 && !info[1]->IsFunction())){
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	} else {
-		Local<Function> callback = Local<Function>::Cast(args[1]);
+		Local<Function> callback = Local<Function>::Cast(info[1]);
 		const int argc = 0;
 		Local<Value> argv[argc];
-		callback->Call(globalObj, argc, argv);
-		return scope.Close(Undefined());
+		callback->Call(instance->globalObj, argc, argv);
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 }
 
-Handle<Value> KeyRing::Clear(const Arguments& args){
+NAN_METHOD(KeyRing::Clear){
 	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(info.This());
 	if (instance->_privateKey != 0){
 		if (instance->_keyType == "ed25519") sodium_memzero(instance->_privateKey, crypto_sign_SECRETKEYBYTES);
 		else sodium_memzero(instance->_privateKey, crypto_box_SECRETKEYBYTES);
@@ -732,17 +797,19 @@ Handle<Value> KeyRing::Clear(const Arguments& args){
 		instance->_keyType = "";
 	}
 	instance->_filename = "";
-	return scope.Close(Undefined());
+	info.GetReturnValue().Set(Nan::Undefined());
+	return;
 }
 
-Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
+NAN_METHOD(KeyRing::SetKeyBuffer){
 	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(info.This());
 	MANDATORY_ARGS(1, "Mandatory args: Buffer keyBuffer");
 
-	if (args[0]->IsUndefined()){
-		ThrowException(Exception::TypeError(String::New("keyBuffer must be a buffer")));
-		return scope.Close(Undefined());
+	if (info[0]->IsUndefined()){
+		Nan::ThrowTypeError("keyBuffer must be a buffer");
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	const unsigned int c25519size = 5 + crypto_box_PUBLICKEYBYTES + crypto_box_SECRETKEYBYTES;
@@ -750,12 +817,12 @@ Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
 
 	string keyBuffer;
 
-	if (args[0]->IsString() || args[0]->IsStringObject()){
-		String::Utf8Value bufferVal(args[0]->ToString());
+	if (info[0]->IsString() || info[0]->IsStringObject()){
+		String::Utf8Value bufferVal(info[0]->ToString());
 		keyBuffer = string(*bufferVal);
 
 	} else { //Supposing it's a buffer
-		Local<Object> keyBufferVal = args[0]->ToObject();
+		Local<Object> keyBufferVal = info[0]->ToObject();
 		const char* keyBufferChar = Buffer::Data(keyBufferVal);
 		const size_t keyBufferSize = Buffer::Length(keyBufferVal);
 
@@ -763,14 +830,17 @@ Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
 	}
 
 	if (keyBuffer[0] == 0x05 && keyBuffer.length() != c25519size){
-		ThrowException(Exception::TypeError(String::New("Invalid key size for Curve25519 keypair")));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError("Invalid key size for Curve25519 keypair");
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	} else if (keyBuffer[0] == 0x06 && keyBuffer.length() != ed25519size){
-		ThrowException(Exception::TypeError(String::New("Invalid key size for Ed25519 keypair")));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError("Invalid key size for Ed25519 keypair");
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	} else if (!(keyBuffer[0] == 0x05 || keyBuffer[0] == 0x06)) {
-		ThrowException(Exception::TypeError(String::New("Invalid key type")));
-		return scope.Close(Undefined());
+		Nan::ThrowTypeError("Invalid key type");
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	//Dynamic memory freeing and reallocation
@@ -798,11 +868,13 @@ Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
 	try {
 		decodeKeyBuffer(keyBuffer, &(instance->_keyType), instance->_privateKey, instance->_publicKey);
 	} catch (runtime_error* e){
-		ThrowException(Exception::TypeError(String::New(e->what())));
-		return scope.Close(Boolean::New(false));
+		Nan::ThrowTypeError(e->what());
+		info.GetReturnValue().Set(Nan::False());
+		return;
 	} catch (void* e){
-		ThrowException(Exception::TypeError(String::New("Unknown error while loading key buffer")));
-		return scope.Close(Boolean::New(false));
+		Nan::ThrowTypeError("Unknown error while loading key buffer");
+		info.GetReturnValue().Set(Nan::False());
+		return;
 	}
 
 	if (instance->_keyType == "ed25519"){
@@ -811,33 +883,38 @@ Handle<Value> KeyRing::SetKeyBuffer(const Arguments& args){
 		deriveAltKeys(instance->_publicKey, instance->_privateKey, instance->_altPublicKey, instance->_altPrivateKey);
 	}
 
-	return scope.Close(Boolean::New(true));
+	info.GetReturnValue().Set(Nan::True());
+	return;
 }
 
-Handle<Value> KeyRing::GetKeyBuffer(const Arguments& args){
+NAN_METHOD(KeyRing::GetKeyBuffer){
 	PREPARE_FUNC_VARS();
 
 	if (instance->_keyLock){
-		return scope.Close(Undefined());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	if (!(instance->_privateKey != 0 && instance->_publicKey != 0)){
-		return scope.Close(Undefined());
+		info.GetReturnValue().Set(Nan::Undefined());
+		return;
 	}
 
 	string keyBuffer = encodeKeyBuffer(instance->_keyType, instance->_privateKey, instance->_publicKey);
 	BUILD_BUFFER_STRING(keybuf, keyBuffer);
-	return scope.Close(keybuf_buffer);
+	info.GetReturnValue().Set(keybuf);
+	return;
 
 	//return scope.Close(String::New(keyBuffer.c_str(), keyBuffer.length()));
 }
 
-Handle<Value> KeyRing::LockKeyBuffer(const Arguments& args){
+NAN_METHOD(KeyRing::LockKeyBuffer){
 	HandleScope scope;
-	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(args.This());
+	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(info.This());
 
 	instance->_keyLock = true;
-	return scope.Close(Undefined());
+	info.GetReturnValue().Set(Nan::Undefined());
+	return;
 }
 
 string KeyRing::strToHex(string const& s){
