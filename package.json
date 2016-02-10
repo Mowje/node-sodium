@@ -12,7 +12,7 @@
     "mocha": ">=0.14.1"
   },
   "scripts": {
-    "preinstall": "make git-getsodium && make sodium"
+    "install": "make git-getsodium && make sodium"
   },
   "repository": {
     "type": "git",
