@@ -9,8 +9,6 @@ stages:
 checkv0_10:
   script: "make test"
   stage: test
-  tags:
-    - v0_10
 
 checkv5:
   script: "make test"
