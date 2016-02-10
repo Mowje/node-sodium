@@ -446,19 +446,19 @@ NAN_METHOD(KeyRing::PublicKeyInfo){
 }
 
 Local<Object> KeyRing::PPublicKeyInfo(){
-	Local<Object> pubKeyObj = Object::New();
+	Local<Object> pubKeyObj = Nan::New<v8::Object>();
 	if (_keyType == "" || _privateKey == 0 || _publicKey == 0){
 		throw new runtime_error("No loaded key pair");
 	}
 	//string keyType = keyPair->at("keyType");
 	string publicKey = strToHex(string((char*) _publicKey, ((_keyType == "ed25519") ? crypto_sign_PUBLICKEYBYTES : crypto_box_PUBLICKEYBYTES)));
-	pubKeyObj->Set(String::NewSymbol("keyType"), String::New(_keyType.c_str()));
-	pubKeyObj->Set(String::NewSymbol("publicKey"), String::New(publicKey.c_str()));
+	pubKeyObj->ForceSet(Nan::New<String>("keyType").ToLocalChecked(), Nan::New<String>(_keyType.c_str()).ToLocalChecked());
+	pubKeyObj->ForceSet(Nan::New<String>("publicKey").ToLocalChecked(), Nan::New<String>(publicKey.c_str()).ToLocalChecked());
 	if (_keyType == "ed25519"){
 		string altPubKey = strToHex(string((char*) _altPublicKey, crypto_box_PUBLICKEYBYTES));
-		pubKeyObj->Set(String::NewSymbol("curvePublicKey"), String::New(altPubKey.c_str()));
+		pubKeyObj->ForceSet(Nan::New<String>("curvePublicKey").ToLocalChecked(), Nan::New<String>(altPubKey.c_str()).ToLocalChecked());
 	} else {
-		pubKeyObj->Set(String::NewSymbol("curvePublicKey"), String::New(publicKey.c_str()));
+		pubKeyObj->ForceSet(Nan::New<String>("curvePublicKey").ToLocalChecked(), Nan::New<String>(publicKey.c_str()).ToLocalChecked());
 	}
 	return pubKeyObj;
 }
@@ -555,7 +555,7 @@ NAN_METHOD(KeyRing::CreateKeyPair){
 	if (info.Length() >= 3 && info[3]->IsFunction()){ //Callback
 		Local<Function> callback = Local<Function>::Cast(info[2]);
 		const unsigned argc = 1;
-		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
+		Local<Value> argv[argc] = { instance->PPublicKeyInfo() };
 		callback->Call(instance->globalObj, argc, argv);
 		info.GetReturnValue().Set(Nan::Undefined());
 		return;
@@ -625,11 +625,11 @@ NAN_METHOD(KeyRing::Load){
 		try {
 			loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey, password, passwordSize, maxOpsLimit);
 		} catch (runtime_error* e){
-			ThrowException(Exception::Error(String::New(e->what())));
+			Nan::ThrowTypeError(e->what());
 			info.GetReturnValue().Set(Nan::Undefined());
 			return;
 		} catch (void* e){
-			ThrowException(Exception::Error(String::New("Error while loading the encrypted key file")));
+			Nan::ThrowTypeError("Error while loading the encrypted key file");
 			info.GetReturnValue().Set(Nan::Undefined());
 			return;
 		}
@@ -638,11 +638,11 @@ NAN_METHOD(KeyRing::Load){
 		try {
 			loadKeyPair(filename, &(instance->_keyType), instance->_privateKey, instance->_publicKey);
 		} catch (runtime_error* e){
-			ThrowException(Exception::Error(String::New(e->what())));
+			Nan::ThrowTypeError(e->what());
 			info.GetReturnValue().Set(Nan::Undefined());
 			return;
 		} catch (void* e){
-			ThrowException(Exception::Error(String::New("Error while loading the key file")));
+			Nan::ThrowTypeError("Error while loading the key file");
 			info.GetReturnValue().Set(Nan::Undefined());
 			return;
 		}
@@ -668,7 +668,7 @@ NAN_METHOD(KeyRing::Load){
 		}
 		Local<Function> callback = Local<Function>::Cast(info[1]);
 		const int argc = 1;
-		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
+		Local<Value> argv[argc] = { instance->PPublicKeyInfo() };
 		callback->Call(instance->globalObj, argc, argv);
 		info.GetReturnValue().Set(Nan::Undefined());
 		return;
@@ -717,11 +717,11 @@ NAN_METHOD(KeyRing::Save){
 			try {
 				saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey, password, passwordSize, opsLimit, r, p);
 			} catch (runtime_error* e){
-				ThrowException(Exception::Error(String::New(e->what())));
+				Nan::ThrowError(e->what());
 				info.GetReturnValue().Set(Nan::Undefined());
 				return;
 			} catch (void* e){
-				ThrowException(Exception::Error(String::New("Error while saving the encrypted key file")));
+				Nan::ThrowError("Error while saving the encrypted key file");
 				info.GetReturnValue().Set(Nan::Undefined());
 				return;
 			}
@@ -729,11 +729,11 @@ NAN_METHOD(KeyRing::Save){
 			try {
 				saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey, password, passwordSize);
 			} catch (runtime_error* e){
-				ThrowException(Exception::Error(String::New(e->what())));
+				Nan::ThrowError(e->what());
 				info.GetReturnValue().Set(Nan::Undefined());
 				return;
 			} catch (void* e){
-				ThrowException(Exception::Error(String::New("Error while saving the encrypted key file")));
+				Nan::ThrowError("Error while saving the encrypted key file");
 				info.GetReturnValue().Set(Nan::Undefined());
 				return;
 			}
@@ -743,11 +743,11 @@ NAN_METHOD(KeyRing::Save){
 		try {
 			saveKeyPair(filename, instance->_keyType, instance->_privateKey, instance->_publicKey);
 		} catch (runtime_error* e){
-			ThrowException(Exception::Error(String::New(e->what())));
+			Nan::ThrowError(e->what());
 			info.GetReturnValue().Set(Nan::Undefined());
 			return;
 		} catch (void* e){
-			ThrowException(Exception::Error(String::New("Error while saving the key file")));
+			Nan::ThrowError("Error while saving the key file");
 			info.GetReturnValue().Set(Nan::Undefined());
 			return;
 		}
@@ -767,7 +767,7 @@ NAN_METHOD(KeyRing::Save){
 }
 
 NAN_METHOD(KeyRing::Clear){
-	HandleScope scope;
+	Nan::HandleScope scope;
 	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(info.This());
 	if (instance->_privateKey != 0){
 		if (instance->_keyType == "ed25519") sodium_memzero(instance->_privateKey, crypto_sign_SECRETKEYBYTES);
@@ -801,7 +801,7 @@ NAN_METHOD(KeyRing::Clear){
 }
 
 NAN_METHOD(KeyRing::SetKeyBuffer){
-	HandleScope scope;
+	Nan::HandleScope scope;
 	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(info.This());
 	MANDATORY_ARGS(1, "Mandatory args: Buffer keyBuffer");
 
@@ -908,7 +908,7 @@ NAN_METHOD(KeyRing::GetKeyBuffer){
 }
 
 NAN_METHOD(KeyRing::LockKeyBuffer){
-	HandleScope scope;
+	Nan::HandleScope scope;
 	KeyRing* instance = ObjectWrap::Unwrap<KeyRing>(info.This());
 
 	instance->_keyLock = true;
