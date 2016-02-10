@@ -65,8 +65,9 @@ Please read the work in progress documentation found under [`docs/`](https://git
 You shoudld also review the unit tests as most of the high level API is "documented" there.
 Don't forget to check out the examples as well.
 
-# Lib Sodium Documentation
-Lib Sodium is somewhat documented [here](http://mob5.host.cs.st-andrews.ac.uk/html/). Node-Sodium follows the same structure and I will keep documenting it as fast as possible.
+# Libsodium Documentation
+
+Libsodium is documented [here](https://download.libsodium.org/doc/). This module follows the same structure for original libsodium methods.
 
 # Install
 
@@ -118,9 +119,12 @@ This error might happen on your first call to node-sodium (whether it be from te
 This error has reportedly happened on different Linux distros after a successful compilation
 
 # Building for node-webkit
-It is possible to build this module for [node-webkit](https://github.com/rogerwang/node-webkit). As of now, the newest possible target is `0.8.6`, because newer versions of node-webkit use a currently unstable version of nodejs on which the current code cannot build yet.
 
-On OSX, you can build an example app by calling `make build-test-nw-osx`; you'll find the resulting app in `build/nw/`
+This feature hasn't been maintained in a long while. Note that it is possible to do it, but since the "wonderful" JS chain of events (Node & IO.js fork & merge , node-webkit renamed to nw.js, and the electron project launch) I haven't re-tested it.
+
+~~It is possible to build this module for [node-webkit](https://github.com/rogerwang/node-webkit). As of now, the newest possible target is `0.8.6`, because newer versions of node-webkit use a currently unstable version of nodejs on which the current code cannot build yet.~~
+
+~~On OSX, you can build an example app by calling `make build-test-nw-osx`; you'll find the resulting app in `build/nw/`~~
 
 # Code Samples
 Please check the fully documented code samples in `test/test_sodium.js`.
