@@ -1,0 +1,11 @@
+before_script:
+  - "make git-getsodium && make sodium"
+  - "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/libsodium/src/libsodium/.libs/"
+  - "export LD_RUN_PATH=$LD_RUN_PATH:$(pwd)/libsodium/src/libsodium/.libs/"
+
+stages:
+  - test
+
+check:
+  script: "make test"
+  stage: test
