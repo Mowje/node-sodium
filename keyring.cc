@@ -135,7 +135,6 @@ NAN_MODULE_INIT(KeyRing::Init){
 * Parameter : String filename [optional]
 */
 NAN_METHOD(KeyRing::New){
-	HandleScope scope;
 	//cout << "KeyRing::New ";
 	if (info.IsConstructCall()){
 		//cout << "ConstructCall" << endl;
@@ -439,7 +438,7 @@ NAN_METHOD(KeyRing::PublicKeyInfo){
 	} else {
 		Local<Function> callback = Local<Function>::Cast(info[0]);
 		const unsigned argc = 1;
-		Local<Value> argv[argc] = { Local<Value>::New(instance->PPublicKeyInfo()) };
+		Local<Value> argv[argc] = { instance->PPublicKeyInfo() };
 		callback->Call(instance->globalObj, argc, argv);
 		info.GetReturnValue().Set(Nan::Undefined());
 		return;
